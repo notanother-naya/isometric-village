@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Desa Lembah Lumut - 3D Isometric Showcase</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- 3D Canvas -->
+  <canvas id="webgl"></canvas>
+
+  <!-- HUD Interface -->
+  <header class="hud-card hud-top-left">
+    <div class="badge-status">
+      <span class="status-dot"></span>
+      <span id="time-badge">Siang Hari</span>
+    </div>
+    <h1 class="village-title">Desa Lembah Lumut</h1>
+    <p class="village-desc">Miniatur pemukiman tepi sungai lereng bukit.</p>
+    <div class="stats-row">
+      <div class="stat-item">
+        <span class="stat-label">Cuaca</span>
+        <span class="stat-val" id="weather-text">Cerah Lembut</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Waktu</span>
+        <span class="stat-val" id="clock-text">12:30</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Populasi</span>
+        <span class="stat-val">34 Jiwa</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Floating Quick Controls -->
+  <nav class="hud-card hud-controls" aria-label="Kontrol Tampilan">
+    <button id="btn-tod" class="btn-action" title="Ganti Waktu Siang/Malam">
+      <span class="btn-icon" id="tod-icon">🌙</span>
+      <span class="btn-text" id="tod-label">Mode Malam</span>
+    </button>
+    <button id="btn-reset" class="btn-action" title="Kembalikan Posisi Kamera">
+      <span class="btn-icon">🔄</span>
+      <span class="btn-text">Reset Kamera</span>
+    </button>
+    <button id="btn-spin" class="btn-action" title="Putar Otomatis">
+      <span class="btn-icon" id="spin-icon">▶️</span>
+      <span class="btn-text" id="spin-label">Auto Putar</span>
+    </button>
+  </nav>
+
+  <!-- Instructions Tooltip -->
+  <footer class="hud-card hud-bottom-center">
+    <p class="control-hints">
+      <span>🖱️ <b>Drag Kiri</b>: Rotasi</span> • 
+      <span>📜 <b>Scroll</b>: Zoom</span> • 
+      <span>🖱️ <b>Drag Kanan</b>: Geser</span>
+    </p>
+  </footer>
+
+  <!-- Building Hover Tooltip -->
+  <div id="hover-tooltip" class="hover-tooltip" style="display: none;"></div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
