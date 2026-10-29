@@ -1,0 +1,28 @@
+{
+  "name": "isometric-village",
+  "version": "1.0.0",
+  "description": "Interactive 3D Isometric Miniature Village showcase built with pure vanilla Web technologies (HTML5, CSS3, ES Modules) and Three.js.",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "start": "npx serve ."
+  },
+  "keywords": [
+    "threejs",
+    "isometric",
+    "3d",
+    "low-poly",
+    "procedural",
+    "showcase",
+    "vanilla-js"
+  ],
+  "author": "Naya",
+  "license": "MIT",
+  "techStack": [
+    "HTML5",
+    "CSS3",
+    "JavaScript ES Modules",
+    "Three.js (r160)",
+    "OrbitControls"
+  ]
+}

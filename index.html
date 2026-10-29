@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Desa Lembah Lumut - 3D Isometric Showcase</title>
+  <title>Desa Lembah Lumut - Interactive 3D World (100x100)</title>
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
   {
@@ -15,59 +15,240 @@
   </script>
 </head>
 <body>
-  <!-- 3D Canvas -->
+  <!-- WebGL Render Canvas -->
   <canvas id="webgl"></canvas>
 
-  <!-- HUD Interface -->
-  <header class="hud-card hud-top-left">
-    <div class="badge-status">
-      <span class="status-dot"></span>
-      <span id="time-badge">Siang Hari</span>
+  <!-- Top Navigation Bar (Apple Dynamic Island / Glass Pill Style) -->
+  <header class="hud-top-bar">
+    <div class="brand-group">
+      <div class="brand-avatar">🏔️</div>
+      <div class="brand-text">
+        <div class="brand-title-row">
+          <span class="brand-name">Lembah Lumut</span>
+          <span class="badge-pill" id="world-badge">World 100×100</span>
+        </div>
+        <span class="brand-subtitle">Pemukiman Berkelanjutan & Ekosistem Lembah</span>
+      </div>
     </div>
-    <h1 class="village-title">Desa Lembah Lumut</h1>
-    <p class="village-desc">Miniatur pemukiman tepi sungai lereng bukit.</p>
-    <div class="stats-row">
-      <div class="stat-item">
-        <span class="stat-label">Cuaca</span>
-        <span class="stat-val" id="weather-text">Cerah Lembut</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Waktu</span>
-        <span class="stat-val" id="clock-text">12:30</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Populasi</span>
-        <span class="stat-val">34 Jiwa</span>
-      </div>
+
+    <!-- Center Mode Switcher (Apple Segmented Control) -->
+    <div class="segmented-control" role="group" aria-label="Pilihan Sudut Pandang">
+      <button class="seg-btn active" id="btn-mode-iso" title="Mode God View / Isometrik">
+        <span class="seg-icon">🦅</span>
+        <span class="seg-label">God View</span>
+      </button>
+      <button class="seg-btn" id="btn-mode-fpv" title="Mode First Person View (FPV)">
+        <span class="seg-icon">🚶‍♂️</span>
+        <span class="seg-label">FPV Walk</span>
+        <span class="badge-mini">Next</span>
+      </button>
+    </div>
+
+    <!-- Quick Action Controls (Right) -->
+    <div class="action-group">
+      <button id="btn-tod" class="apple-pill-btn" title="Ubah Waktu Siang / Senja / Malam">
+        <span class="btn-icon" id="tod-icon">🌙</span>
+        <span class="btn-text" id="tod-label">Malam</span>
+      </button>
+
+      <button id="btn-spin" class="apple-pill-btn" title="Rotasi Otomatis Diorama">
+        <span class="btn-icon" id="spin-icon">▶️</span>
+        <span class="btn-text" id="spin-label">Auto Putar</span>
+      </button>
+
+      <button id="btn-settings-toggle" class="apple-pill-btn icon-only" title="Buka Pengaturan Grafis & Performa">
+        <span class="btn-icon">⚙️</span>
+      </button>
     </div>
   </header>
 
-  <!-- Floating Quick Controls -->
-  <nav class="hud-card hud-controls" aria-label="Kontrol Tampilan">
-    <button id="btn-tod" class="btn-action" title="Ganti Waktu Siang/Malam">
-      <span class="btn-icon" id="tod-icon">🌙</span>
-      <span class="btn-text" id="tod-label">Mode Malam</span>
-    </button>
-    <button id="btn-reset" class="btn-action" title="Kembalikan Posisi Kamera">
-      <span class="btn-icon">🔄</span>
-      <span class="btn-text">Reset Kamera</span>
-    </button>
-    <button id="btn-spin" class="btn-action" title="Putar Otomatis">
-      <span class="btn-icon" id="spin-icon">▶️</span>
-      <span class="btn-text" id="spin-label">Auto Putar</span>
-    </button>
+  <!-- Quick Teleport / Cinematic Landmark Presets (Bottom Left Floating Strip) -->
+  <nav class="landmark-navigator" aria-label="Navigasi Landmark Desa">
+    <div class="nav-header">
+      <span class="nav-title">Jelajahi Landmark</span>
+      <span class="nav-hint">Klik untuk fokus kamera</span>
+    </div>
+    <div class="landmark-pills">
+      <button class="landmark-btn active" data-target="overview">
+        <span class="lm-icon">🌐</span> Panorama Penuh
+      </button>
+      <button class="landmark-btn" data-target="market">
+        <span class="lm-icon">🎪</span> Pasar & Alun-Alun
+      </button>
+      <button class="landmark-btn" data-target="tavern">
+        <span class="lm-icon">☕</span> Kedai Kopi & Teh
+      </button>
+      <button class="landmark-btn" data-target="watermill">
+        <span class="lm-icon">🌊</span> Kincir Air & Dermaga
+      </button>
+      <button class="landmark-btn" data-target="windmill">
+        <span class="lm-icon">🌾</span> Bukit Kincir Angin
+      </button>
+      <button class="landmark-btn" data-target="residential">
+        <span class="lm-icon">🏡</span> Pemukiman Warga
+      </button>
+    </div>
   </nav>
 
-  <!-- Instructions Tooltip -->
-  <footer class="hud-card hud-bottom-center">
-    <p class="control-hints">
-      <span>🖱️ <b>Drag Kiri</b>: Rotasi</span> • 
-      <span>📜 <b>Scroll</b>: Zoom</span> • 
-      <span>🖱️ <b>Drag Kanan</b>: Geser</span>
-    </p>
-  </footer>
+  <!-- Village Live Stats Widget (Top Left Floating) -->
+  <aside class="hud-stats-widget">
+    <div class="stat-bubble">
+      <span class="stat-indicator"></span>
+      <span class="stat-title" id="stat-tod">Siang Harmonis</span>
+    </div>
+    <div class="stat-metrics">
+      <div class="metric">
+        <span class="m-val" id="clock-display">11:45</span>
+        <span class="m-lbl">Jam Desa</span>
+      </div>
+      <div class="metric-divider"></div>
+      <div class="metric">
+        <span class="m-val" id="fps-display">60</span>
+        <span class="m-lbl">FPS Target</span>
+      </div>
+      <div class="metric-divider"></div>
+      <div class="metric">
+        <span class="m-val">128</span>
+        <span class="m-lbl">Warga</span>
+      </div>
+    </div>
+  </aside>
 
-  <!-- Building Hover Tooltip -->
+  <!-- Bottom Interaction Hints -->
+  <div class="bottom-hints-bar">
+    <div class="hint-tag"><kbd>Klik Kiri + Geser</kbd> Rotasi Isometrik</div>
+    <div class="hint-tag"><kbd>Klik Kanan + Geser</kbd> Pan Peta</div>
+    <div class="hint-tag"><kbd>Scroll</kbd> Zoom In/Out</div>
+    <div class="hint-tag"><kbd>Hover Objek</kbd> Info Bangunan</div>
+  </div>
+
+  <!-- Settings Drawer / Modal (Apple macOS/iOS Sheet Style) -->
+  <div id="settings-modal" class="apple-modal-overlay">
+    <div class="apple-modal-sheet">
+      <div class="sheet-header">
+        <div class="sheet-title-group">
+          <div class="sheet-icon">⚙️</div>
+          <div>
+            <h3>Pengaturan Grafis & Performa</h3>
+            <p>Konfigurasi rendering real-time sesuai kapabilitas perangkat</p>
+          </div>
+        </div>
+        <button id="btn-close-settings" class="btn-close" aria-label="Tutup">✕</button>
+      </div>
+
+      <div class="sheet-body">
+        <!-- Section 1: Rendering & Shadow -->
+        <div class="setting-group">
+          <div class="setting-group-title">Kualitas Visual & Bayangan</div>
+          
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Kualitas Bayangan (Shadows)</span>
+              <span class="setting-desc">Resolusi bayangan matahari real-time</span>
+            </div>
+            <select id="opt-shadows" class="apple-select">
+              <option value="high">Tinggi (2048px Soft)</option>
+              <option value="medium" selected>Sedang (1024px)</option>
+              <option value="low">Rendah (512px)</option>
+              <option value="off">Mati (Maksimal FPS)</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Kerapatan Vegetasi (Pohon & Semak)</span>
+              <span class="setting-desc">Jumlah pohon instanced di seluruh lembah</span>
+            </div>
+            <select id="opt-vegetation" class="apple-select">
+              <option value="dense" selected>Rimbun Asri (100%)</option>
+              <option value="balanced">Seimbang (70%)</option>
+              <option value="light">Ringan (40%)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Section 2: Atmosphere & Particles -->
+        <div class="setting-group">
+          <div class="setting-group-title">Atmosfer & Partikel</div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Efek Asap Cerobong & Kunang-kunang</span>
+              <span class="setting-desc">Partikel asap tungku dan kunang-kunang malam</span>
+            </div>
+            <label class="apple-switch">
+              <input type="checkbox" id="opt-particles" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Kabut Kedalaman (Atmospheric Fog)</span>
+              <span class="setting-desc">Gradasi kabut lembut di tepian cakrawala</span>
+            </div>
+            <label class="apple-switch">
+              <input type="checkbox" id="opt-fog" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Animasi Air Dinamis (Water Wave)</span>
+              <span class="setting-desc">Riak air sungai dan pantulan lembut</span>
+            </div>
+            <label class="apple-switch">
+              <input type="checkbox" id="opt-water" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section 3: FPV Readiness Preview -->
+        <div class="setting-group fpv-preview-box">
+          <div class="fpv-box-header">
+            <span class="fpv-box-icon">🚶‍♂️</span>
+            <div>
+              <div class="fpv-box-title">Modul FPV (First Person View)</div>
+              <div class="fpv-box-desc">Sistem kamera perspektif mata manusia (tinggi 1.6m) + ground-raycasting telah disiapkan untuk tahap berikutnya.</div>
+            </div>
+          </div>
+          <div class="fpv-specs-grid">
+            <div class="spec-card">
+              <span class="spec-k">Luas Dunia</span>
+              <span class="spec-v">100 × 100 Unit</span>
+            </div>
+            <div class="spec-card">
+              <span class="spec-k">Distrik Aktif</span>
+              <span class="spec-v">6 Zona Unik</span>
+            </div>
+            <div class="spec-card">
+              <span class="spec-k">Jalur Jalan</span>
+              <span class="spec-v">Batu & Tanah Padat</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sheet-footer">
+        <span class="footer-note">Desa Lembah Lumut • Three.js WebGL Engine</span>
+        <button id="btn-save-settings" class="apple-primary-btn">Terapkan Pengaturan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FPV Next Milestone Notification Toast -->
+  <div id="fpv-toast" class="apple-toast" style="display: none;">
+    <div class="toast-icon">🚀</div>
+    <div class="toast-content">
+      <strong>Mode FPV Walk Disiapkan!</strong>
+      <p>World 100×100 ini sudah dirancang dengan proporsi jalan dan undakan yang siap dijelajahi secara first person di tahap selanjutnya.</p>
+    </div>
+    <button id="btn-close-toast" class="toast-close">✕</button>
+  </div>
+
+  <!-- Building Hover Tooltip (Interactive Raycasting) -->
   <div id="hover-tooltip" class="hover-tooltip" style="display: none;"></div>
 
   <script type="module" src="main.js"></script>
