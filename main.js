@@ -1971,7 +1971,7 @@ function spawnVillagers(count = 12) {
   }
 
   // Sync HUD display
-  if (popDisplay) popDisplay.textContent = `${villagers.length} Warga`;
+  if (popDisplay) popDisplay.textContent = villagers.length.toString();
 }
 
 // Helper: Shortest angle interpolation
