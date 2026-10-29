@@ -1459,6 +1459,13 @@ const optNpcChat = document.getElementById('opt-npc-chat');
 const popDisplay = document.getElementById('pop-display');
 
 function openSettings() {
+  if (optShadows) optShadows.value = CONFIG.settings.shadows;
+  if (optVegetation) optVegetation.value = CONFIG.settings.vegetation;
+  if (optParticles) optParticles.checked = CONFIG.settings.particles;
+  if (optFog) optFog.checked = CONFIG.settings.fog;
+  if (optWater) optWater.checked = CONFIG.settings.waterAnim;
+  if (optNpcCount) optNpcCount.value = CONFIG.settings.npcCount.toString();
+  if (optNpcChat) optNpcChat.checked = CONFIG.settings.npcChat;
   if (settingsModal) settingsModal.classList.add('open');
 }
 
@@ -2232,6 +2239,9 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyV') {
     // Quick toggle between God View and FPV Walk
     setViewMode(CONFIG.viewMode === 'iso' ? 'fpv' : 'iso');
+  }
+  if (e.code === 'Escape' && CONFIG.viewMode === 'fpv') {
+    setViewMode('iso');
   }
 });
 
