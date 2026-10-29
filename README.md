@@ -31,7 +31,7 @@ Visualisasi 3D miniatur pemukiman lembah procedural berskala 100×100 unit berga
    - **Distrik 6 - Kebun & Pertanian Sayur**: Bedengan tanah gembur bercocok tanam kubis dan labu oranye, serta gubuk perkakas.
    - **Sungai Alami & Jembatan Ganda**: Jembatan Lengkung Batu Alun-Alun dan Jembatan Kayu Hilir yang melintasi sungai diagonal beriak air transparan.
 
-4. **Vegetasi Rimbun Instanced (600+ Elemen)**:
+4. **Vegetasi Rimbun Instanced 60 FPS (600+ Elemen)**:
    - 220 pohon pinus cemara.
    - 140 pohon ek rindang (broadleaf oak).
    - 160 semak belukar & rumpun perdu.

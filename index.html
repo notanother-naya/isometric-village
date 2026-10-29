@@ -33,14 +33,13 @@
 
     <!-- Center Mode Switcher (Apple Segmented Control) -->
     <div class="segmented-control" role="group" aria-label="Pilihan Sudut Pandang">
-      <button class="seg-btn active" id="btn-mode-iso" title="Mode God View / Isometrik">
+      <button class="seg-btn active" id="btn-mode-iso" title="Mode God View / Isometrik (Tekan 'V' untuk beralih)">
         <span class="seg-icon">🦅</span>
         <span class="seg-label">God View</span>
       </button>
-      <button class="seg-btn" id="btn-mode-fpv" title="Mode First Person View (FPV)">
+      <button class="seg-btn" id="btn-mode-fpv" title="Mode First Person View (FPV) (Tekan 'V' untuk beralih)">
         <span class="seg-icon">🚶‍♂️</span>
         <span class="seg-label">FPV Walk</span>
-        <span class="badge-mini">Next</span>
       </button>
     </div>
 
@@ -205,28 +204,32 @@
           </div>
         </div>
 
-        <!-- Section 3: FPV Readiness Preview -->
-        <div class="setting-group fpv-preview-box">
-          <div class="fpv-box-header">
-            <span class="fpv-box-icon">🚶‍♂️</span>
-            <div>
-              <div class="fpv-box-title">Modul FPV (First Person View)</div>
-              <div class="fpv-box-desc">Sistem kamera perspektif mata manusia (tinggi 1.6m) + ground-raycasting telah disiapkan untuk tahap berikutnya.</div>
+        <!-- Section 3: Population & NPCs -->
+        <div class="setting-group">
+          <div class="setting-group-title">Penduduk & Kehidupan Desa (NPC)</div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Jumlah Penduduk (NPC)</span>
+              <span class="setting-desc">Kepadatan warga desa yang berinteraksi & beraktivitas</span>
             </div>
+            <select id="opt-npc-count" class="apple-select">
+              <option value="6">Sepi (6 Warga)</option>
+              <option value="12" selected>Normal (12 Warga)</option>
+              <option value="20">Ramai (20 Warga)</option>
+              <option value="30">Pesta Lembah (30 Warga)</option>
+            </select>
           </div>
-          <div class="fpv-specs-grid">
-            <div class="spec-card">
-              <span class="spec-k">Luas Dunia</span>
-              <span class="spec-v">100 × 100 Unit</span>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Balon Obrolan NPC (Chat Bubbles)</span>
+              <span class="setting-desc">Tampilkan dialog & aktivitas warga di atas kepala</span>
             </div>
-            <div class="spec-card">
-              <span class="spec-k">Distrik Aktif</span>
-              <span class="spec-v">6 Zona Unik</span>
-            </div>
-            <div class="spec-card">
-              <span class="spec-k">Jalur Jalan</span>
-              <span class="spec-v">Batu & Tanah Padat</span>
-            </div>
+            <label class="apple-switch">
+              <input type="checkbox" id="opt-npc-chat" checked>
+              <span class="slider"></span>
+            </label>
           </div>
         </div>
       </div>
@@ -238,12 +241,32 @@
     </div>
   </div>
 
-  <!-- FPV Next Milestone Notification Toast -->
+  <!-- FPV Reticle / Crosshair -->
+  <div id="fpv-crosshair" class="fpv-crosshair" style="display: none;"></div>
+
+  <!-- FPV Controls Guide HUD (Bottom Floating Pill) -->
+  <div id="fpv-hud-guide" class="fpv-hud-guide" style="display: none;">
+    <div class="fpv-key-badge"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Gerak</div>
+    <div class="fpv-key-badge"><kbd>Shift</kbd> Lari</div>
+    <div class="fpv-key-badge"><kbd>Space</kbd> Lompat</div>
+    <div class="fpv-key-badge"><kbd>V</kbd> / <kbd>Esc</kbd> Keluar ke God View</div>
+  </div>
+
+  <!-- FPV Click-to-Lock Prompt Overlay -->
+  <div id="fpv-click-lock-prompt" class="fpv-click-prompt" style="display: none;">
+    <div class="prompt-icon">🖱️</div>
+    <div class="prompt-text">
+      <strong>Klik Layar untuk Mengunci Kursor</strong>
+      <span>Gerakkan mouse untuk melihat sekeliling layaknya petualang desa</span>
+    </div>
+  </div>
+
+  <!-- FPV Welcome / Help Toast -->
   <div id="fpv-toast" class="apple-toast" style="display: none;">
-    <div class="toast-icon">🚀</div>
+    <div class="toast-icon">🚶‍♂️</div>
     <div class="toast-content">
-      <strong>Mode FPV Walk Disiapkan!</strong>
-      <p>World 100×100 ini sudah dirancang dengan proporsi jalan dan undakan yang siap dijelajahi secara first person di tahap selanjutnya.</p>
+      <strong>Mode FPV Walk Aktif!</strong>
+      <p>Gunakan WASD untuk berjalan, Shift untuk lari, Space untuk lompat. Tekan V atau Esc untuk kembali ke God View.</p>
     </div>
     <button id="btn-close-toast" class="toast-close">✕</button>
   </div>
