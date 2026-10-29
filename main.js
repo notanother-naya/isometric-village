@@ -233,9 +233,135 @@ const lanternLights = [];
 const fireflies = [];
 let waterMesh = null;
 let instancedPineMesh = null;
+let instancedPineTrunkMesh = null;
 let instancedOakMesh = null;
+let instancedOakTrunkMesh = null;
 let instancedBushMesh = null;
 let instancedBoulderMesh = null;
+
+// Walkable houses with doorway thresholds (Ambang Pintu) and interior dimensions
+const WALKABLE_HOUSES = [
+  { id: 'carpenter', name: 'Rumah Pandai Kayu Lembah', x: -28, z: -14, rotY: 0.2, w: 3.4, d: 2.8, doorWidth: 0.9 },
+  { id: 'hunter', name: 'Rumah Pemburu Lembah', x: -19, z: -14, rotY: -Math.PI / 3, w: 3.0, d: 2.4, doorWidth: 0.9 },
+  { id: 'weaver', name: 'Rumah Penenun Sutra', x: -25, z: -8, rotY: 0.5, w: 3.5, d: 2.7, doorWidth: 0.9 },
+  { id: 'guard', name: 'Menara Jaga Barat', x: -33, z: -18, rotY: 0.8, w: 2.8, d: 2.8, doorWidth: 0.9 },
+  { id: 'shed', name: 'Lumbung Alat & Jerami', x: -8, z: 32, rotY: 0.2, w: 3.5, d: 2.8, doorWidth: 1.0 },
+  { id: 'lurah', name: 'Rumah Kepala Desa (Pak Lurah)', x: -24, z: -20, rotY: Math.PI / 4, w: 3.6, d: 3.0, doorWidth: 0.9 },
+  { id: 'healer', name: 'Rumah Tabib & Pengrajin Herbal', x: -16, z: -23, rotY: -Math.PI / 6, w: 3.2, d: 2.6, doorWidth: 0.9 }
+];
+
+// Major solid circular obstacles (Air mancur, kincir, kedai, dan kios pasar)
+const SOLID_OBSTACLES = [
+  { x: 2, z: -3, r: 1.8, name: 'Air Mancur' },
+  { x: 18, z: 7, r: 3.5, name: 'Kedai Kopi' },
+  { x: -18, z: 12, r: 2.8, name: 'Kincir Air' },
+  { x: 24, z: -26, r: 2.6, name: 'Kincir Angin' },
+  { x: -4, z: -7, r: 1.4, name: 'Kios Buah' },
+  { x: 8, z: -7, r: 1.4, name: 'Kios Bunga' },
+  { x: -4, z: 1, r: 1.4, name: 'Kios Roti' },
+  { x: 8, z: 1, r: 1.4, name: 'Kios Sutra' }
+];
+const OBSTACLES = SOLID_OBSTACLES;
+
+// ponytail: 2D OBB + circular sliding collision with doorway corridor. Upgrade to 3D voxel/BVH if multi-floor vertical navigation is added.
+function resolveEntityCollision(pos, radius = 0.35) {
+  // 1. World perimeter boundary (-47 to +47)
+  pos.x = THREE.MathUtils.clamp(pos.x, -47, 47);
+  pos.z = THREE.MathUtils.clamp(pos.z, -47, 47);
+
+  // 2. Solid circular obstacles
+  for (let i = 0; i < SOLID_OBSTACLES.length; i++) {
+    const obs = SOLID_OBSTACLES[i];
+    const dx = pos.x - obs.x;
+    const dz = pos.z - obs.z;
+    const dist = Math.hypot(dx, dz);
+    const minDist = obs.r + radius;
+    if (dist < minDist) {
+      const push = minDist - dist;
+      const nx = dist > 0.0001 ? dx / dist : 1;
+      const nz = dist > 0.0001 ? dz / dist : 0;
+      pos.x += nx * push;
+      pos.z += nz * push;
+    }
+  }
+
+  // 3. Walkable houses with doorway thresholds (Ambang Pintu) & interior/exterior walls
+  let currentHouse = null;
+  let inDoorway = false;
+
+  for (let i = 0; i < WALKABLE_HOUSES.length; i++) {
+    const h = WALKABLE_HOUSES[i];
+    const halfW = h.w / 2;
+    const halfD = h.d / 2;
+    const doorHalfW = (h.doorWidth || 0.9) / 2;
+    const wallThick = 0.15;
+
+    const dx = pos.x - h.x;
+    const dz = pos.z - h.z;
+    const cos = Math.cos(h.rotY);
+    const sin = Math.sin(h.rotY);
+    let lx = dx * cos - dz * sin;
+    let lz = dx * sin + dz * cos;
+
+    const maxBound = Math.max(halfW, halfD) + radius + 0.6;
+    if (Math.abs(lx) > maxBound || Math.abs(lz) > maxBound) continue;
+
+    const isAtDoorX = Math.abs(lx) <= doorHalfW;
+    const isAtDoorZ = Math.abs(lz - halfD) <= 0.45;
+
+    if (isAtDoorX && isAtDoorZ) {
+      const maxLx = doorHalfW - radius * 0.4;
+      if (maxLx > 0) {
+        lx = THREE.MathUtils.clamp(lx, -maxLx, maxLx);
+      }
+      inDoorway = true;
+      currentHouse = h;
+    } else {
+      const isInside = Math.abs(lx) < halfW && lz < halfD && lz > -halfD;
+
+      if (isInside) {
+        currentHouse = h;
+        const innerMinX = -halfW + wallThick + radius;
+        const innerMaxX = halfW - wallThick - radius;
+        const innerMinZ = -halfD + wallThick + radius;
+        const innerMaxZ = halfD - wallThick - radius;
+
+        lx = THREE.MathUtils.clamp(lx, innerMinX, innerMaxX);
+
+        if (isAtDoorX) {
+          if (lz < innerMinZ) lz = innerMinZ;
+        } else {
+          lz = THREE.MathUtils.clamp(lz, innerMinZ, innerMaxZ);
+        }
+      } else {
+        const closeX = Math.abs(lx) < halfW + radius;
+        const closeZ = Math.abs(lz) < halfD + radius;
+
+        if (closeX && closeZ) {
+          if (lz >= halfD && isAtDoorX) {
+            // Approaching doorway threshold from outside: allow entry
+          } else {
+            const penLeft = (lx + radius) - (-halfW);
+            const penRight = (halfW) - (lx - radius);
+            const penBack = (lz + radius) - (-halfD);
+            const penFront = (halfD) - (lz - radius);
+
+            const minPen = Math.min(penLeft, penRight, penBack, penFront);
+            if (minPen === penLeft) lx = -halfW - radius;
+            else if (minPen === penRight) lx = halfW + radius;
+            else if (minPen === penBack) lz = -halfD - radius;
+            else if (minPen === penFront) lz = halfD + radius;
+          }
+        }
+      }
+    }
+
+    pos.x = h.x + (lx * cos + lz * sin);
+    pos.z = h.z + (-lx * sin + lz * cos);
+  }
+
+  return { currentHouse, inDoorway };
+}
 
 // ============================================================================
 // 1. PROCEDURAL 100x100 TERRAIN & TOPOGRAPHY
@@ -268,40 +394,99 @@ function getGroundElevation(vx, vz) {
     vy += Math.cos((distForest / 24) * (Math.PI / 2)) * 2.8;
   }
 
-  // 4. Carve River Valley Trench
+  // 4. Carve Main River Valley Trench
   const riverWidth = 7.5;
   if (distRiver < riverWidth) {
     const depth = Math.cos((distRiver / riverWidth) * (Math.PI / 2)) * 2.2;
     vy -= depth;
   }
 
-  // Organic gentle surface noise
-  vy += Math.sin(vx * 0.12) * Math.cos(vz * 0.12) * 0.35;
+  // 5. Carve Millstream Canal (around x: -17, z: 0 to 18 for Watermill & Wooden Bridge)
+  if (vz >= 0 && vz <= 18) {
+    const distMill = Math.abs(vx - (-17));
+    const millWidth = 4.2;
+    if (distMill < millWidth) {
+      const taper = Math.sin((vz / 18) * Math.PI);
+      const millDepth = Math.cos((distMill / millWidth) * (Math.PI / 2)) * 1.5 * Math.max(0.45, taper);
+      vy -= millDepth;
+    }
+  }
+
+  // Organic gentle surface noise (smoothed around central market plaza)
+  const centerDist = Math.hypot(vx, vz - (-3));
+  const noiseDamp = centerDist < 12 ? Math.min(1.0, centerDist / 12) : 1.0;
+  vy += Math.sin(vx * 0.12) * Math.cos(vz * 0.12) * 0.35 * noiseDamp;
   return vy;
 }
 
 function getGroundHeight(x, z) {
-  // 1. Central Stone Arch Bridge (near Market, X: 0, Z: 4.5, rotated -PI/7, deck y=0.55 + height)
-  const dxB1 = x - 0;
+  // 0. Walkable House Interior Floors & Doorstep Thresholds (Ambang Pintu)
+  for (let i = 0; i < WALKABLE_HOUSES.length; i++) {
+    const h = WALKABLE_HOUSES[i];
+    const dx = x - h.x;
+    const dz = z - h.z;
+    const cos = Math.cos(h.rotY);
+    const sin = Math.sin(h.rotY);
+    const lx = dx * cos - dz * sin;
+    const lz = dx * sin + dz * cos;
+    const halfW = h.w / 2;
+    const halfD = h.d / 2;
+
+    // Inside house footprint -> flat interior level floor
+    if (Math.abs(lx) <= halfW + 0.05 && lz >= -halfD - 0.05 && lz <= halfD + 0.05) {
+      return getGroundElevation(h.x, h.z) + 0.4;
+    }
+    // Ambang pintu / doorstep ramp (smooth transition at doorway)
+    if (Math.abs(lx) <= 0.65 && lz > halfD + 0.05 && lz <= halfD + 0.65) {
+      const floorY = getGroundElevation(h.x, h.z) + 0.4;
+      const naturalY = getGroundElevation(x, z);
+      const t = (halfD + 0.65 - lz) / 0.6;
+      return THREE.MathUtils.lerp(naturalY, floorY, t);
+    }
+  }
+
+  // 1. Central Stone Arch Bridge (across Main River, X: 2.5, Z: 4.5, rotY: -0.60)
+  const dxB1 = x - 2.5;
   const dzB1 = z - 4.5;
-  const cos1 = Math.cos(Math.PI / 7);
-  const sin1 = Math.sin(Math.PI / 7);
-  const localX1 = dxB1 * cos1 - dzB1 * sin1;
-  const localZ1 = dxB1 * sin1 + dzB1 * cos1;
-  if (Math.abs(localX1) <= 2.2 && Math.abs(localZ1) <= 4.8) {
-    return 0.72; // Deck height
+  const cos1 = Math.cos(0.60);
+  const sin1 = Math.sin(0.60);
+  const localX1 = dxB1 * cos1 + dzB1 * sin1;
+  const localZ1 = -dxB1 * sin1 + dzB1 * cos1;
+  if (Math.abs(localX1) <= 2.2 && Math.abs(localZ1) <= 7.15) {
+    if (Math.abs(localZ1) <= 4.75) {
+      return 0.72; // Deck height
+    }
+    // Smooth approach ramp transition to riverbank terrain
+    const rampT = (7.15 - Math.abs(localZ1)) / (7.15 - 4.75);
+    const gY = getGroundElevation(x, z);
+    return gY + rampT * (0.72 - gY);
   }
 
-  // 2. Wooden Footbridge (near Watermill, X: -16, Z: 6, width 2.6, length 8.8)
-  const dxB2 = x - (-16);
-  const dzB2 = z - 6;
-  if (Math.abs(dxB2) <= 1.4 && Math.abs(dzB2) <= 4.4) {
-    return 0.45; // Wood deck height
+  // 2. Wooden Footbridge (across Millstream, X: -17, Z: 6.2, rotY: PI/2)
+  const dxB2 = x - (-17);
+  const dzB2 = z - 6.2;
+  const localX2 = dzB2;
+  const localZ2 = -dxB2;
+  if (Math.abs(localX2) <= 1.4 && Math.abs(localZ2) <= 6.2) {
+    if (Math.abs(localZ2) <= 4.4) {
+      return 0.45; // Wood deck height
+    }
+    // Smooth approach ramp transition to stream bank
+    const rampT = (6.2 - Math.abs(localZ2)) / (6.2 - 4.4);
+    const gY = getGroundElevation(x, z);
+    return gY + rampT * (0.45 - gY);
   }
 
-  // 3. Pier / Dock near Watermill (X: -18, Z: 14)
-  if (Math.abs(x - (-18)) <= 2.6 && Math.abs(z - 14) <= 4.0) {
-    return 0.4;
+  // 3. Pier / Dock near Watermill (X: -20.5, Z: 7.5, rotY: PI / 3.2)
+  const dxP = x - (-20.5);
+  const dzP = z - 7.5;
+  const rotP = Math.PI / 3.2;
+  const cosP = Math.cos(rotP);
+  const sinP = Math.sin(rotP);
+  const localXP = dxP * cosP - dzP * sinP;
+  const localZP = dxP * sinP + dzP * cosP;
+  if (Math.abs(localXP) <= 1.5 && Math.abs(localZP) <= 3.7) {
+    return 0.48; // Pier wood deck height
   }
 
   // Base terrain with water surface floor clamp
@@ -311,6 +496,369 @@ function getGroundHeight(x, z) {
   }
   return y;
 }
+
+// ============================================================================
+// 2D GRID A* PATHFINDING & CHOKE POINT NAVIGATION ENGINE
+// ============================================================================
+function isPointOnBridge(x, z) {
+  // 1. Central Stone Arch Bridge (across Main River, X: 2.5, Z: 4.5, rotY: -0.60)
+  const dxB1 = x - 2.5;
+  const dzB1 = z - 4.5;
+  const cos1 = Math.cos(0.60);
+  const sin1 = Math.sin(0.60);
+  const localX1 = dxB1 * cos1 + dzB1 * sin1;
+  const localZ1 = -dxB1 * sin1 + dzB1 * cos1;
+  if (Math.abs(localX1) <= 2.2 && Math.abs(localZ1) <= 7.2) return true;
+
+  // 2. Wooden Footbridge (across Millstream, X: -17, Z: 6.2, rotY: PI/2)
+  const localX2 = z - 6.2;
+  const localZ2 = -(x - (-17));
+  if (Math.abs(localX2) <= 1.4 && Math.abs(localZ2) <= 6.2) return true;
+
+  // 3. Pier / Dock near Watermill (X: -20.5, Z: 7.5, rotY: PI / 3.2)
+  const dxP = x - (-20.5);
+  const dzP = z - 7.5;
+  const rotP = Math.PI / 3.2;
+  const cosP = Math.cos(rotP);
+  const sinP = Math.sin(rotP);
+  const localXP = dxP * cosP - dzP * sinP;
+  const localZP = dxP * sinP + dzP * cosP;
+  if (Math.abs(localXP) <= 1.5 && Math.abs(localZP) <= 3.7) return true;
+
+  return false;
+}
+
+function isPointInWater(x, z) {
+  if (isPointOnBridge(x, z)) return false;
+
+  // Main River trench
+  const rx = riverCenterX(z);
+  if (Math.abs(x - rx) < 3.8) return true;
+
+  // Millstream canal trench
+  if (z >= 0 && z <= 18 && Math.abs(x - (-17)) < 2.2) return true;
+
+  return false;
+}
+
+function isCellWalkable(x, z) {
+  if (x < -47 || x > 47 || z < -47 || z > 47) return false;
+  if (isPointInWater(x, z)) return false;
+
+  // Major circular obstacles
+  for (let i = 0; i < SOLID_OBSTACLES.length; i++) {
+    const obs = SOLID_OBSTACLES[i];
+    const dx = x - obs.x;
+    const dz = z - obs.z;
+    if (dx * dx + dz * dz < (obs.r + 0.35) * (obs.r + 0.35)) return false;
+  }
+
+  // Walkable house perimeter walls
+  for (let i = 0; i < WALKABLE_HOUSES.length; i++) {
+    const h = WALKABLE_HOUSES[i];
+    const halfW = h.w / 2;
+    const halfD = h.d / 2;
+    const doorHalfW = (h.doorWidth || 0.9) / 2;
+    const dx = x - h.x;
+    const dz = z - h.z;
+    const cos = Math.cos(h.rotY);
+    const sin = Math.sin(h.rotY);
+    const lx = dx * cos - dz * sin;
+    const lz = dx * sin + dz * cos;
+    const margin = 0.35;
+
+    if (Math.abs(lx) <= halfW + margin && Math.abs(lz) <= halfD + margin) {
+      const isDoor = Math.abs(lx) <= doorHalfW && Math.abs(lz - halfD) <= 0.65;
+      if (!isDoor) {
+        const isInterior = Math.abs(lx) <= halfW - margin && Math.abs(lz) <= halfD - margin;
+        if (!isInterior) return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+// ponytail: 2D Uniform Grid (0.8m step) A* with binary heap & zero-allocation search buffers. Upgrade to Hierarchical Pathfinding / NavMesh if world scales beyond 200m.
+const GRID_MIN = -48;
+const GRID_MAX = 48;
+const GRID_STEP = 0.8;
+const GRID_COLS = Math.round((GRID_MAX - GRID_MIN) / GRID_STEP) + 1; // 121
+const GRID_ROWS = GRID_COLS;
+const GRID_TOTAL = GRID_COLS * GRID_ROWS;
+
+const PATH_GRID = new Uint8Array(GRID_TOTAL);
+let currentNavSearchId = 0;
+const navGScore = new Float32Array(GRID_TOTAL);
+const navSearchId = new Uint32Array(GRID_TOTAL);
+const navCameFrom = new Int32Array(GRID_TOTAL);
+
+function initPathfindingGrid() {
+  for (let gz = 0; gz < GRID_ROWS; gz++) {
+    const wz = GRID_MIN + gz * GRID_STEP;
+    for (let gx = 0; gx < GRID_COLS; gx++) {
+      const wx = GRID_MIN + gx * GRID_STEP;
+      PATH_GRID[gz * GRID_COLS + gx] = isCellWalkable(wx, wz) ? 1 : 0;
+    }
+  }
+}
+
+function isGridWalkable(gx, gz) {
+  if (gx < 0 || gx >= GRID_COLS || gz < 0 || gz >= GRID_ROWS) return false;
+  return PATH_GRID[gz * GRID_COLS + gx] === 1;
+}
+
+function findClosestWalkableGrid(gx, gz, maxR = 6) {
+  if (isGridWalkable(gx, gz)) return { gx, gz };
+  for (let r = 1; r <= maxR; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        if (Math.abs(dx) === r || Math.abs(dz) === r) {
+          const nx = gx + dx;
+          const nz = gz + dz;
+          if (isGridWalkable(nx, nz)) return { gx: nx, gz: nz };
+        }
+      }
+    }
+  }
+  return { gx, gz };
+}
+
+class FastMinHeap {
+  constructor() {
+    this.items = [];
+  }
+  push(node) {
+    this.items.push(node);
+    let i = this.items.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (this.items[p].f <= this.items[i].f) break;
+      const tmp = this.items[p]; this.items[p] = this.items[i]; this.items[i] = tmp;
+      i = p;
+    }
+  }
+  pop() {
+    const top = this.items[0];
+    const bottom = this.items.pop();
+    if (this.items.length > 0) {
+      this.items[0] = bottom;
+      let i = 0;
+      const len = this.items.length;
+      while (true) {
+        const left = (i << 1) + 1;
+        const right = left + 1;
+        let best = i;
+        if (left < len && this.items[left].f < this.items[best].f) best = left;
+        if (right < len && this.items[right].f < this.items[best].f) best = right;
+        if (best === i) break;
+        const tmp = this.items[i]; this.items[i] = this.items[best]; this.items[best] = tmp;
+        i = best;
+      }
+    }
+    return top;
+  }
+  get size() { return this.items.length; }
+  clear() { this.items.length = 0; }
+}
+
+const navHeap = new FastMinHeap();
+
+const NAV_DIRS = [
+  { dx: 1, dz: 0, cost: 1.0 },
+  { dx: -1, dz: 0, cost: 1.0 },
+  { dx: 0, dz: 1, cost: 1.0 },
+  { dx: 0, dz: -1, cost: 1.0 },
+  { dx: 1, dz: 1, cost: 1.4142 },
+  { dx: -1, dz: 1, cost: 1.4142 },
+  { dx: 1, dz: -1, cost: 1.4142 },
+  { dx: -1, dz: -1, cost: 1.4142 }
+];
+
+function heuristicNav(gx, gz, goalGx, goalGz) {
+  const dx = Math.abs(gx - goalGx);
+  const dz = Math.abs(gz - goalGz);
+  return dx > dz ? 1.4142 * dz + (dx - dz) : 1.4142 * dx + (dz - dx);
+}
+
+function hasLineOfSight(pA, pB) {
+  const dx = pB.x - pA.x;
+  const dz = pB.z - pA.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.2) return true;
+  const samples = Math.ceil(dist / 0.4);
+  for (let s = 1; s < samples; s++) {
+    const t = s / samples;
+    const sx = pA.x + dx * t;
+    const sz = pA.z + dz * t;
+    if (!isCellWalkable(sx, sz)) return false;
+  }
+  return true;
+}
+
+function smoothPath(rawPath) {
+  if (!rawPath || rawPath.length <= 2) return rawPath;
+  const smoothed = [rawPath[0]];
+  let curr = 0;
+  while (curr < rawPath.length - 1) {
+    let furthest = curr + 1;
+    for (let j = rawPath.length - 1; j > curr + 1; j--) {
+      if (hasLineOfSight(rawPath[curr], rawPath[j])) {
+        furthest = j;
+        break;
+      }
+    }
+    smoothed.push(rawPath[furthest]);
+    curr = furthest;
+  }
+  return smoothed;
+}
+
+function findPath(startPos, goalPos, smooth = true) {
+  let sGx = Math.round((startPos.x - GRID_MIN) / GRID_STEP);
+  let sGz = Math.round((startPos.z - GRID_MIN) / GRID_STEP);
+  let gGx = Math.round((goalPos.x - GRID_MIN) / GRID_STEP);
+  let gGz = Math.round((goalPos.z - GRID_MIN) / GRID_STEP);
+
+  sGx = THREE.MathUtils.clamp(sGx, 0, GRID_COLS - 1);
+  sGz = THREE.MathUtils.clamp(sGz, 0, GRID_ROWS - 1);
+  gGx = THREE.MathUtils.clamp(gGx, 0, GRID_COLS - 1);
+  gGz = THREE.MathUtils.clamp(gGz, 0, GRID_ROWS - 1);
+
+  const startValid = findClosestWalkableGrid(sGx, sGz);
+  sGx = startValid.gx;
+  sGz = startValid.gz;
+
+  const goalValid = findClosestWalkableGrid(gGx, gGz);
+  gGx = goalValid.gx;
+  gGz = goalValid.gz;
+
+  if (sGx === gGx && sGz === gGz) {
+    return [new THREE.Vector3(goalPos.x, getGroundHeight(goalPos.x, goalPos.z), goalPos.z)];
+  }
+
+  currentNavSearchId++;
+  if (currentNavSearchId > 4000000000) {
+    navSearchId.fill(0);
+    currentNavSearchId = 1;
+  }
+
+  navHeap.clear();
+  const startIdx = sGz * GRID_COLS + sGx;
+  const goalIdx = gGz * GRID_COLS + gGx;
+
+  navGScore[startIdx] = 0;
+  navSearchId[startIdx] = currentNavSearchId;
+  navCameFrom[startIdx] = -1;
+
+  navHeap.push({ gx: sGx, gz: sGz, idx: startIdx, f: heuristicNav(sGx, sGz, gGx, gGz) });
+
+  let found = false;
+  let iterations = 0;
+  const maxIterations = 3500;
+
+  while (navHeap.size > 0 && iterations++ < maxIterations) {
+    const cur = navHeap.pop();
+    if (cur.idx === goalIdx) {
+      found = true;
+      break;
+    }
+
+    const curG = navGScore[cur.idx];
+
+    for (let i = 0; i < 8; i++) {
+      const d = NAV_DIRS[i];
+      const nx = cur.gx + d.dx;
+      const nz = cur.gz + d.dz;
+      if (nx < 0 || nx >= GRID_COLS || nz < 0 || nz >= GRID_ROWS) continue;
+
+      const nIdx = nz * GRID_COLS + nx;
+      if (PATH_GRID[nIdx] === 0) continue;
+
+      // Prevent corner cutting across diagonals
+      if (d.dx !== 0 && d.dz !== 0) {
+        if (!isGridWalkable(cur.gx + d.dx, cur.gz) || !isGridWalkable(cur.gx, cur.gz + d.dz)) {
+          continue;
+        }
+      }
+
+      const tentativeG = curG + d.cost;
+      const isVisited = navSearchId[nIdx] === currentNavSearchId;
+
+      if (!isVisited || tentativeG < navGScore[nIdx]) {
+        navSearchId[nIdx] = currentNavSearchId;
+        navGScore[nIdx] = tentativeG;
+        navCameFrom[nIdx] = cur.idx;
+        const h = heuristicNav(nx, nz, gGx, gGz);
+        navHeap.push({ gx: nx, gz: nz, idx: nIdx, f: tentativeG + h });
+      }
+    }
+  }
+
+  if (!found) {
+    // Fallback: direct line to goal
+    return [new THREE.Vector3(goalPos.x, getGroundHeight(goalPos.x, goalPos.z), goalPos.z)];
+  }
+
+  // Reconstruct path
+  const rawPath = [];
+  let currIdx = goalIdx;
+  while (currIdx !== -1) {
+    const cgx = currIdx % GRID_COLS;
+    const cgz = Math.floor(currIdx / GRID_COLS);
+    const wx = GRID_MIN + cgx * GRID_STEP;
+    const wz = GRID_MIN + cgz * GRID_STEP;
+    rawPath.push(new THREE.Vector3(wx, getGroundHeight(wx, wz), wz));
+    currIdx = navCameFrom[currIdx];
+  }
+  rawPath.reverse();
+
+  // Set the precise goal point on the last waypoint
+  rawPath[rawPath.length - 1].x = goalPos.x;
+  rawPath[rawPath.length - 1].z = goalPos.z;
+  rawPath[rawPath.length - 1].y = getGroundHeight(goalPos.x, goalPos.z);
+
+  return smooth ? smoothPath(rawPath) : rawPath;
+}
+
+// Self-check for river barriers and bridge choke points
+function runNavSelfCheck() {
+  console.assert(isPointInWater(riverCenterX(20), 20) === true, 'Riverbed should be detected as water');
+  console.assert(isPointOnBridge(2.5, 4.5) === true, 'Central Stone Arch Bridge must be on bridge');
+  console.assert(isPointInWater(2.5, 4.5) === false, 'Stone Bridge must not be water');
+  console.assert(isPointOnBridge(-17, 6.2) === true, 'Wooden Footbridge must be on bridge');
+  console.assert(isPointInWater(-17, 6.2) === false, 'Wooden Footbridge must not be water');
+
+  // Verify that path crossing river uses bridge
+  const pWest = { x: -6, z: 4.5 };
+  const pEast = { x: 12, z: 4.5 };
+  const crossPath = findPath(pWest, pEast);
+  console.assert(crossPath && crossPath.length >= 2, 'Path across river must succeed');
+  const crossesBridge = crossPath.some((pt) => isPointOnBridge(pt.x, pt.z));
+  console.assert(crossesBridge, 'Path across river must cross via bridge choke point');
+
+  // Verify house door navigation
+  const pPlaza = { x: 2, z: -3 };
+  const pDoorLurah = { x: -22.8, z: -18.8 };
+  const housePath = findPath(pPlaza, pDoorLurah);
+  console.assert(housePath && housePath.length >= 2, 'Path to house door must succeed');
+  const endWp = housePath[housePath.length - 1];
+  console.assert(Math.hypot(endWp.x - pDoorLurah.x, endWp.z - pDoorLurah.z) < 1.0, 'Path must terminate near doorway');
+
+  console.log('[VillageNav] Self-check passed: River barriers and bridge choke points verified.');
+}
+
+window.VillageNav = {
+  isCellWalkable,
+  isPointOnBridge,
+  isPointInWater,
+  findPath,
+  smoothPath,
+  hasLineOfSight,
+  initPathfindingGrid,
+  runNavSelfCheck,
+  setVillagerDestination: (v, poi) => setVillagerDestination(v, poi)
+};
 
 function build100x100Terrain() {
   const terrainGroup = new THREE.Group();
@@ -343,9 +891,10 @@ function build100x100Terrain() {
 
     // Vertex color blending based on height and river proximity
     let vertexColor;
-    if (distRiver < riverWidth * 0.65) {
+    const isMill = vz >= 0 && vz <= 18 && Math.abs(vx - (-17)) < 4.2;
+    if (distRiver < riverWidth * 0.65 || (isMill && Math.abs(vx - (-17)) < 2.5)) {
       vertexColor = colorRiverBed;
-    } else if (distRiver < riverWidth + 1.8) {
+    } else if (distRiver < riverWidth + 1.8 || isMill) {
       vertexColor = colorSand;
     } else if (vy > 2.0) {
       vertexColor = colorHills;
@@ -378,7 +927,7 @@ function build100x100Terrain() {
   cliffMesh.receiveShadow = true;
   terrainGroup.add(cliffMesh);
 
-  // River Water Mesh
+  // Main River Water Mesh
   const riverPoints = [];
   for (let z = -48; z <= 48; z += 4) {
     riverPoints.push(new THREE.Vector3(riverCenterX(z), -0.4, z));
@@ -391,6 +940,19 @@ function build100x100Terrain() {
   waterMesh.position.y = -0.05;
   waterMesh.receiveShadow = true;
   terrainGroup.add(waterMesh);
+
+  // Millstream Canal Water Mesh (feeding Watermill wheel & flowing under Wooden Footbridge)
+  const millPoints = [];
+  for (let z = 0; z <= 18; z += 3) {
+    millPoints.push(new THREE.Vector3(-17, -0.28, z));
+  }
+  const millCurve = new THREE.CatmullRomCurve3(millPoints);
+  const millGeo = new THREE.TubeGeometry(millCurve, 16, 2.2, 6, false);
+  millGeo.scale(1, 0.16, 1);
+  const millWater = new THREE.Mesh(millGeo, materials.water);
+  millWater.position.y = -0.05;
+  millWater.receiveShadow = true;
+  terrainGroup.add(millWater);
 
   villageWorld.add(terrainGroup);
 }
@@ -410,7 +972,7 @@ function buildPaths() {
       new THREE.BoxGeometry(1.6, 0.08, 1.6),
       materials.cobblestone
     );
-    slab.position.set(px, 0.04, pz - 2);
+    slab.position.set(px, getGroundElevation(px, pz - 2) + 0.04, pz - 2);
     slab.rotation.y = rad;
     slab.receiveShadow = true;
     pathGroup.add(slab);
@@ -435,11 +997,13 @@ function buildPaths() {
       const t = i / steps;
       const px = from[0] + (to[0] - from[0]) * t + (Math.sin(t * Math.PI * 3) * 0.4);
       const pz = from[1] + (to[1] - from[1]) * t + (Math.cos(t * Math.PI * 2) * 0.4);
+      const gy = getGroundElevation(px, pz);
+      if (gy < -0.1) continue; // Skip path stepping stones inside waterbeds
       const stone = new THREE.Mesh(
         new THREE.BoxGeometry(1.2 + Math.random() * 0.4, 0.07, 1.2 + Math.random() * 0.4),
         Math.random() > 0.4 ? materials.cobblestone : materials.dirtPath
       );
-      stone.position.set(px, 0.04, pz);
+      stone.position.set(px, gy + 0.04, pz);
       stone.rotation.y = Math.random() * Math.PI;
       stone.receiveShadow = true;
       pathGroup.add(stone);
@@ -453,7 +1017,7 @@ function buildPaths() {
 // 3. BRIDGES (Stone Arch Bridge & Wooden Plank Footbridge)
 // ============================================================================
 function buildBridges() {
-  // 1. Central Stone Arch Bridge (near Market, X: 4, Z: 6)
+  // 1. Central Stone Arch Bridge (across Main River, X: 2.5, Z: 4.5, rotated -0.60 rad)
   const stoneBridge = new THREE.Group();
   stoneBridge.name = 'Jembatan Batu Alun-Alun';
 
@@ -480,6 +1044,20 @@ function buildBridges() {
     });
   });
 
+  // Smooth approach ramps on both ends of stone bridge
+  const stoneRampGeo = new THREE.BoxGeometry(4.2, 0.35, 2.4);
+  const stoneRampNorth = new THREE.Mesh(stoneRampGeo, materials.wallStone);
+  stoneRampNorth.position.set(0, 0.35, -5.95);
+  stoneRampNorth.rotation.x = -Math.atan2(0.48, 2.4);
+  stoneRampNorth.receiveShadow = true;
+  stoneBridge.add(stoneRampNorth);
+
+  const stoneRampSouth = new THREE.Mesh(stoneRampGeo, materials.wallStone);
+  stoneRampSouth.position.set(0, 0.35, 5.95);
+  stoneRampSouth.rotation.x = Math.atan2(0.48, 2.4);
+  stoneRampSouth.receiveShadow = true;
+  stoneBridge.add(stoneRampSouth);
+
   // Supporting stone arch piers
   const pierGeo = new THREE.BoxGeometry(4.0, 1.8, 1.6);
   const pier1 = new THREE.Mesh(pierGeo, materials.stoneCliff);
@@ -492,12 +1070,12 @@ function buildBridges() {
   pier2.position.set(0, -0.4, 2.5);
   stoneBridge.add(pier2);
 
-  stoneBridge.position.set(0, 0, 4.5);
-  stoneBridge.rotation.y = -Math.PI / 7;
+  stoneBridge.position.set(2.5, 0, 4.5);
+  stoneBridge.rotation.y = -0.60;
   villageWorld.add(stoneBridge);
   interactableObjects.push(stoneBridge);
 
-  // 2. Rustic Wooden Footbridge (near Watermill, X: -16, Z: 6)
+  // 2. Rustic Wooden Footbridge (across Millstream, X: -17, Z: 6.2, rotated PI/2)
   const woodBridge = new THREE.Group();
   woodBridge.name = 'Jembatan Kayu Hilir';
 
@@ -514,8 +1092,32 @@ function buildBridges() {
     woodBridge.add(rail);
   });
 
+  // Smooth approach ramps on both ends of wooden bridge
+  const woodRampGeo = new THREE.BoxGeometry(2.6, 0.2, 1.8);
+  const woodRamp1 = new THREE.Mesh(woodRampGeo, materials.woodPlank);
+  woodRamp1.position.set(0, 0.22, -5.3);
+  woodRamp1.rotation.x = -Math.atan2(0.3, 1.8);
+  woodRamp1.receiveShadow = true;
+  woodBridge.add(woodRamp1);
+
+  const woodRamp2 = new THREE.Mesh(woodRampGeo, materials.woodPlank);
+  woodRamp2.position.set(0, 0.22, 5.3);
+  woodRamp2.rotation.x = Math.atan2(0.3, 1.8);
+  woodRamp2.receiveShadow = true;
+  woodBridge.add(woodRamp2);
+
+  // Supporting wooden pilings in stream bed
+  [-2.2, 2.2].forEach((pz) => {
+    const pileL = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.6, 6), materials.woodDark);
+    pileL.position.set(-1.0, -0.4, pz);
+    woodBridge.add(pileL);
+    const pileR = pileL.clone();
+    pileR.position.set(1.0, -0.4, pz);
+    woodBridge.add(pileR);
+  });
+
   woodBridge.position.set(-17, 0, 6.2);
-  woodBridge.rotation.y = Math.PI / 3.5;
+  woodBridge.rotation.y = Math.PI / 2;
   villageWorld.add(woodBridge);
   interactableObjects.push(woodBridge);
 }
@@ -554,7 +1156,7 @@ function buildMarketDistrict() {
   centerPillar.castShadow = true;
   fountain.add(centerPillar);
 
-  fountain.position.set(2, 0, -3);
+  fountain.position.set(2, getGroundElevation(2, -3), -3);
   marketGroup.add(fountain);
   interactableObjects.push(fountain);
 
@@ -571,17 +1173,17 @@ function buildMarketDistrict() {
     const stall = new THREE.Group();
     stall.name = name;
 
-    // Counter table
-    const table = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.9, 1.2), materials.woodPlank);
-    table.position.y = 0.45;
+    // Counter table with foundation depth to prevent gaps on uneven ground
+    const table = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.1, 1.2), materials.woodPlank);
+    table.position.y = 0.35;
     table.castShadow = true;
     table.receiveShadow = true;
     stall.add(table);
 
-    // 4 Corner posts
+    // 4 Corner posts anchored into ground
     [[-1.1, -0.5], [1.1, -0.5], [-1.1, 0.5], [1.1, 0.5]].forEach(([cx, cz]) => {
-      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.2, 0.08), materials.woodDark);
-      pole.position.set(cx, 1.1, cz);
+      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.4, 0.08), materials.woodDark);
+      pole.position.set(cx, 1.0, cz);
       pole.castShadow = true;
       stall.add(pole);
     });
@@ -603,7 +1205,7 @@ function buildMarketDistrict() {
     crate2.position.set(0.4, 1.05, 0.1);
     stall.add(crate2);
 
-    stall.position.set(x, 0, z);
+    stall.position.set(x, getGroundElevation(x, z), z);
     stall.rotation.y = rot;
     marketGroup.add(stall);
     interactableObjects.push(stall);
@@ -624,7 +1226,7 @@ function buildMarketDistrict() {
   boardPanel.castShadow = true;
   noticeBoard.add(boardPanel);
 
-  noticeBoard.position.set(-1.0, 0, -8.5);
+  noticeBoard.position.set(-1.0, getGroundElevation(-1.0, -8.5), -8.5);
   marketGroup.add(noticeBoard);
   interactableObjects.push(noticeBoard);
 
@@ -650,7 +1252,7 @@ function buildTavernDistrict() {
 
   // Outdoor wooden terrace
   const deck = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.2, 5.0), materials.woodPlank);
-  deck.position.set(15.2, 0.1, 10.5);
+  deck.position.set(15.2, getGroundElevation(15.2, 10.5) + 0.1, 10.5);
   deck.rotation.y = -Math.PI / 5;
   deck.receiveShadow = true;
   tavernDistrict.add(deck);
@@ -671,7 +1273,9 @@ function buildTavernDistrict() {
       tableGroup.add(bench);
     });
 
-    tableGroup.position.set(15.5 + tx * 1.5, 0.2, 10.8 + tx * 0.8);
+    const txPos = 15.5 + tx * 1.5;
+    const tzPos = 10.8 + tx * 0.8;
+    tableGroup.position.set(txPos, getGroundElevation(txPos, tzPos) + 0.15, tzPos);
     tableGroup.rotation.y = -Math.PI / 5;
     tavernDistrict.add(tableGroup);
   });
@@ -692,7 +1296,7 @@ function buildTavernDistrict() {
   signBoard.castShadow = true;
   signpost.add(signBoard);
 
-  signpost.position.set(13.5, 0, 8.2);
+  signpost.position.set(13.5, getGroundElevation(13.5, 8.2), 8.2);
   tavernDistrict.add(signpost);
   interactableObjects.push(signpost);
 
@@ -747,7 +1351,7 @@ function buildWatermillDistrict() {
   mill.add(wheelGroup);
   animatedRotations.push({ obj: wheelGroup, axis: 'x', speed: 0.022 });
 
-  mill.position.set(-18, 0, 12);
+  mill.position.set(-18, getGroundElevation(-18, 12), 12);
   mill.rotation.y = Math.PI / 3.2;
   district.add(mill);
   interactableObjects.push(mill);
@@ -756,37 +1360,43 @@ function buildWatermillDistrict() {
   const pier = new THREE.Group();
   pier.name = 'Dermaga Perahu Nelayan';
 
-  const pierDeck = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.25, 7.5), materials.woodPlank);
-  pierDeck.position.y = 0.25;
+  const pierDeck = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.25, 7.2), materials.woodPlank);
+  pierDeck.position.y = 0.35;
   pierDeck.castShadow = true;
   pierDeck.receiveShadow = true;
   pier.add(pierDeck);
 
-  // Pier wood pylons in water
-  [[-1.2, -2.5], [1.2, -2.5], [-1.2, 2.5], [1.2, 2.5]].forEach(([px, pz]) => {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 1.8, 6), materials.woodDark);
-    post.position.set(px, -0.4, pz);
+  // Pier wood pylons anchored deeply into stream bed
+  [[-1.1, -2.8], [1.1, -2.8], [-1.1, 0], [1.1, 0], [-1.1, 2.8], [1.1, 2.8]].forEach(([px, pz]) => {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 2.6, 6), materials.woodDark);
+    post.position.set(px, -0.9, pz);
+    post.castShadow = true;
     pier.add(post);
   });
 
-  // Docked Wooden Rowboat
+  const cleat = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.4, 6), materials.woodDark);
+  cleat.position.set(1.25, 0.55, 0.8);
+  cleat.castShadow = true;
+  pier.add(cleat);
+
+  // Docked Wooden Rowboat floating on water surface
   const boat = new THREE.Group();
   boat.name = 'Perahu Dayung Nelayan';
   const boatHull = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.5, 3.2), materials.woodDark);
-  boatHull.position.y = -0.15;
+  boatHull.position.y = 0.15;
   boatHull.castShadow = true;
   boat.add(boatHull);
 
   const boatSeat = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.1, 0.5), materials.woodPlank);
-  boatSeat.position.y = -0.05;
+  boatSeat.position.y = 0.25;
   boat.add(boatSeat);
 
-  boat.position.set(2.8, -0.15, 1.0);
+  boat.position.set(2.4, -0.05, 0.8);
   boat.rotation.y = 0.3;
   pier.add(boat);
 
-  pier.position.set(-23, 0, 8);
-  pier.rotation.y = Math.PI / 3.5;
+  pier.position.set(-20.5, 0, 7.5);
+  pier.rotation.y = Math.PI / 3.2;
   district.add(pier);
   interactableObjects.push(pier);
 
@@ -804,23 +1414,37 @@ function buildWindmillDistrict() {
   const mill = new THREE.Group();
   mill.name = 'Kincir Angin Bukit Gandum';
 
+  // Sturdy octagonal stone foundation anchoring into hill slope
+  const foundation = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.7, 2.9, 1.4, 10),
+    materials.wallStone
+  );
+  foundation.position.y = 0.4;
+  foundation.castShadow = true;
+  foundation.receiveShadow = true;
+  mill.add(foundation);
+
   const tower = new THREE.Mesh(
     new THREE.CylinderGeometry(1.6, 2.5, 6.2, 10),
     materials.wallCream
   );
-  tower.position.y = 3.1;
+  tower.position.y = 3.8;
   tower.castShadow = true;
   tower.receiveShadow = true;
   mill.add(tower);
 
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.5, 0.15), materials.woodDark);
+  door.position.set(0, 1.4, 2.45);
+  mill.add(door);
+
   const cap = new THREE.Mesh(new THREE.ConeGeometry(2.0, 1.8, 10), materials.roofSlate);
-  cap.position.y = 6.2 + 0.9;
+  cap.position.y = 6.9 + 0.9;
   cap.castShadow = true;
   mill.add(cap);
 
   // 4 Rotating Windmill Blades
   const bladesGroup = new THREE.Group();
-  bladesGroup.position.set(0, 6.2, 1.8);
+  bladesGroup.position.set(0, 6.9, 1.8);
 
   const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.4, 8), materials.woodDark);
   hub.rotation.x = Math.PI / 2;
@@ -846,7 +1470,7 @@ function buildWindmillDistrict() {
   mill.add(bladesGroup);
   animatedRotations.push({ obj: bladesGroup, axis: 'z', speed: 0.018 });
 
-  mill.position.set(24, 3.8, -26);
+  mill.position.set(24, getGroundElevation(24, -26), -26);
   district.add(mill);
   interactableObjects.push(mill);
 
@@ -856,24 +1480,24 @@ function buildWindmillDistrict() {
 
   const plotGeo = new THREE.BoxGeometry(10, 0.15, 8);
   const wheatPlot = new THREE.Mesh(plotGeo, materials.wheatGold);
-  wheatPlot.position.set(20, 3.5, -17);
+  wheatPlot.position.set(20, getGroundElevation(20, -17) + 0.08, -17);
   wheatPlot.rotation.y = 0.2;
   wheatPlot.receiveShadow = true;
   wheatGroup.add(wheatPlot);
 
   // Cylindrical Hay Bales
   const hayBales = [
-    [17, 3.6, -15],
-    [18.5, 3.6, -14.5],
-    [22, 3.6, -18],
-    [23, 3.6, -19]
+    [17, -15],
+    [18.5, -14.5],
+    [22, -18],
+    [23, -19]
   ];
-  hayBales.forEach(([hx, hy, hz]) => {
+  hayBales.forEach(([hx, hz]) => {
     const bale = new THREE.Mesh(
       new THREE.CylinderGeometry(0.55, 0.55, 1.1, 8),
       materials.roofThatch
     );
-    bale.position.set(hx, hy + 0.3, hz);
+    bale.position.set(hx, getGroundElevation(hx, hz) + 0.3, hz);
     bale.rotation.z = Math.PI / 2;
     bale.rotation.y = Math.random() * Math.PI;
     bale.castShadow = true;
@@ -939,7 +1563,7 @@ function buildResidentialDistrict() {
   const fenceGroup = new THREE.Group();
   for (let fx = -32; fx <= -12; fx += 2.2) {
     const fence = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.6, 0.08), materials.woodDark);
-    fence.position.set(fx, 1.4, -26);
+    fence.position.set(fx, getGroundElevation(fx, -26) + 0.3, -26);
     fence.castShadow = true;
     fenceGroup.add(fence);
   }
@@ -964,7 +1588,7 @@ function buildFarmlandDistrict() {
 
   soilBeds.forEach(({ x, z, w, d }) => {
     const bed = new THREE.Mesh(new THREE.BoxGeometry(w, 0.25, d), materials.dirtDark);
-    bed.position.set(x, 0.15, z);
+    bed.position.set(x, getGroundElevation(x, z) + 0.15, z);
     bed.receiveShadow = true;
     farmGroup.add(bed);
 
@@ -975,7 +1599,9 @@ function buildFarmlandDistrict() {
           new THREE.DodecahedronGeometry(0.28, 0),
           Math.random() > 0.4 ? materials.pumpkinOrange : materials.oakGreen
         );
-        crop.position.set(x + rx, 0.45, z + rz);
+        const cx = x + rx;
+        const cz = z + rz;
+        crop.position.set(cx, getGroundElevation(cx, cz) + 0.45, cz);
         crop.scale.set(1.2, 0.9, 1.2);
         crop.castShadow = true;
         farmGroup.add(crop);
@@ -983,22 +1609,71 @@ function buildFarmlandDistrict() {
     }
   });
 
-  // Rustic Tool Shed / Barn
+  // Rustic Tool Shed / Barn (Walkable with doorway opening)
   const shed = new THREE.Group();
   shed.name = 'Lumbung Alat & Jerami';
-  const shedBody = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.4, 2.8), materials.woodDark);
-  shedBody.position.y = 1.2;
-  shedBody.castShadow = true;
-  shedBody.receiveShadow = true;
-  shed.add(shedBody);
+  const sw = 3.5, sh = 2.4, sd = 2.8, st = 0.15, sDoorW = 1.0;
+  const sWallY = 0.4 + sh / 2;
+  const sFrontW = (sw - sDoorW) / 2;
+
+  // Floor
+  const shedFloor = new THREE.Mesh(new THREE.BoxGeometry(sw - 0.05, 0.08, sd - 0.05), materials.dirtDark);
+  shedFloor.position.set(0, 0.4 + 0.04, 0);
+  shedFloor.receiveShadow = true;
+  shed.add(shedFloor);
+
+  // Back Wall
+  const shedBack = new THREE.Mesh(new THREE.BoxGeometry(sw, sh, st), materials.woodDark);
+  shedBack.position.set(0, sWallY, -sd / 2 + st / 2);
+  shedBack.castShadow = true;
+  shed.add(shedBack);
+
+  // Left & Right Walls
+  const shedLeft = new THREE.Mesh(new THREE.BoxGeometry(st, sh, sd - st * 2), materials.woodDark);
+  shedLeft.position.set(-sw / 2 + st / 2, sWallY, 0);
+  shedLeft.castShadow = true;
+  shed.add(shedLeft);
+
+  const shedRight = new THREE.Mesh(new THREE.BoxGeometry(st, sh, sd - st * 2), materials.woodDark);
+  shedRight.position.set(sw / 2 - st / 2, sWallY, 0);
+  shedRight.castShadow = true;
+  shed.add(shedRight);
+
+  // Front Walls (left and right of door)
+  const shedFrontL = new THREE.Mesh(new THREE.BoxGeometry(sFrontW, sh, st), materials.woodDark);
+  shedFrontL.position.set(-sw / 2 + sFrontW / 2, sWallY, sd / 2 - st / 2);
+  shedFrontL.castShadow = true;
+  shed.add(shedFrontL);
+
+  const shedFrontR = new THREE.Mesh(new THREE.BoxGeometry(sFrontW, sh, st), materials.woodDark);
+  shedFrontR.position.set(sw / 2 - sFrontW / 2, sWallY, sd / 2 - st / 2);
+  shedFrontR.castShadow = true;
+  shed.add(shedFrontR);
+
+  // Doorstep threshold
+  const shedStep = new THREE.Mesh(new THREE.BoxGeometry(sDoorW + 0.2, 0.12, 0.45), materials.wallStone);
+  shedStep.position.set(0, 0.4 - 0.06, sd / 2 + 0.2);
+  shedStep.receiveShadow = true;
+  shed.add(shedStep);
+
+  // Interior: Hay bales
+  const hayBale1 = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.6), materials.roofThatch);
+  hayBale1.position.set(-sw / 2 + 0.65, 0.4 + 0.25, -sd / 2 + 0.65);
+  hayBale1.castShadow = true;
+  shed.add(hayBale1);
+
+  const hayBale2 = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.45, 0.5), materials.roofThatch);
+  hayBale2.position.set(sw / 2 - 0.6, 0.4 + 0.23, -sd / 2 + 0.6);
+  hayBale2.castShadow = true;
+  shed.add(hayBale2);
 
   const shedRoof = new THREE.Mesh(new THREE.ConeGeometry(2.8, 1.4, 4), materials.roofTerracotta);
-  shedRoof.position.y = 2.4 + 0.7;
+  shedRoof.position.y = 0.4 + sh + 0.7;
   shedRoof.rotation.y = Math.PI / 4;
   shedRoof.castShadow = true;
   shed.add(shedRoof);
 
-  shed.position.set(-8, 0, 32);
+  shed.position.set(-8, getGroundElevation(-8, 32), 32);
   shed.rotation.y = 0.2;
   farmGroup.add(shed);
   interactableObjects.push(shed);
@@ -1023,7 +1698,7 @@ function buildFarmlandDistrict() {
   scHat.castShadow = true;
   scarecrow.add(scHat);
 
-  scarecrow.position.set(-11, 0, 25);
+  scarecrow.position.set(-11, getGroundElevation(-11, 25), 25);
   farmGroup.add(scarecrow);
   interactableObjects.push(scarecrow);
 
@@ -1036,19 +1711,145 @@ function buildFarmlandDistrict() {
 function createHouse({ x, z, rotY, w, h, d, roofType, roofColor, name, hasChimney = true, twoStory = false }) {
   const house = new THREE.Group();
   house.name = name;
+  const houseGroundY = getGroundElevation(x, z);
 
-  // Stone Foundation
-  const foundation = new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.4, d + 0.3), materials.wallStone);
-  foundation.position.y = 0.2;
+  // Deep Stone Foundation - anchors securely into sloping terrain to prevent floating
+  const foundationHeight = 1.0;
+  const foundation = new THREE.Mesh(new THREE.BoxGeometry(w + 0.35, foundationHeight, d + 0.35), materials.wallStone);
+  foundation.position.y = 0.4 - foundationHeight / 2; // top aligns with wall base at 0.4, extends to -0.6
   foundation.receiveShadow = true;
   house.add(foundation);
 
-  // Main Walls
-  const wallMesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), materials.wallCream);
-  wallMesh.position.y = 0.4 + h / 2;
-  wallMesh.castShadow = true;
-  wallMesh.receiveShadow = true;
-  house.add(wallMesh);
+  // Interior Wood Plank Floor
+  const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(w - 0.05, 0.08, d - 0.05), materials.woodPlank);
+  floorMesh.position.set(0, 0.4 + 0.04, 0);
+  floorMesh.receiveShadow = true;
+  house.add(floorMesh);
+
+  // Hollow Walls & Ambang Pintu (Doorway Threshold)
+  const wt = 0.15; // Wall thickness
+  const doorW = 0.9; // Walkable doorway opening
+  const doorH = 1.7; // Doorway opening height
+  const wallH = h;
+  const wallY = 0.4 + wallH / 2;
+
+  // Back Wall
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(w, wallH, wt), materials.wallCream);
+  backWall.position.set(0, wallY, -d / 2 + wt / 2);
+  backWall.castShadow = true;
+  backWall.receiveShadow = true;
+  house.add(backWall);
+
+  // Left & Right Walls
+  const sideWallGeo = new THREE.BoxGeometry(wt, wallH, d - wt * 2);
+  const leftWall = new THREE.Mesh(sideWallGeo, materials.wallCream);
+  leftWall.position.set(-w / 2 + wt / 2, wallY, 0);
+  leftWall.castShadow = true;
+  leftWall.receiveShadow = true;
+  house.add(leftWall);
+
+  const rightWall = new THREE.Mesh(sideWallGeo, materials.wallCream);
+  rightWall.position.set(w / 2 - wt / 2, wallY, 0);
+  rightWall.castShadow = true;
+  rightWall.receiveShadow = true;
+  house.add(rightWall);
+
+  // Front Walls (Left and Right of Doorway Opening)
+  const frontW = (w - doorW) / 2;
+  const frontWallGeo = new THREE.BoxGeometry(frontW, wallH, wt);
+  const frontWallL = new THREE.Mesh(frontWallGeo, materials.wallCream);
+  frontWallL.position.set(-w / 2 + frontW / 2, wallY, d / 2 - wt / 2);
+  frontWallL.castShadow = true;
+  frontWallL.receiveShadow = true;
+  house.add(frontWallL);
+
+  const frontWallR = new THREE.Mesh(frontWallGeo, materials.wallCream);
+  frontWallR.position.set(w / 2 - frontW / 2, wallY, d / 2 - wt / 2);
+  frontWallR.castShadow = true;
+  frontWallR.receiveShadow = true;
+  house.add(frontWallR);
+
+  // Door lintel (wall segment above doorway)
+  if (wallH > doorH) {
+    const lintelH = wallH - doorH;
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(doorW, lintelH, wt), materials.wallCream);
+    lintel.position.set(0, 0.4 + doorH + lintelH / 2, d / 2 - wt / 2);
+    lintel.castShadow = true;
+    lintel.receiveShadow = true;
+    house.add(lintel);
+  }
+
+  // Ambang Pintu (Stone Doorstep Threshold)
+  const doorstep = new THREE.Mesh(new THREE.BoxGeometry(doorW + 0.2, 0.12, 0.45), materials.wallStone);
+  doorstep.position.set(0, 0.4 - 0.06, d / 2 + 0.15);
+  doorstep.receiveShadow = true;
+  house.add(doorstep);
+
+  // Timber Door Frame
+  const postW = 0.08;
+  const postL = new THREE.Mesh(new THREE.BoxGeometry(postW, doorH, 0.16), materials.woodDark);
+  postL.position.set(-doorW / 2, 0.4 + doorH / 2, d / 2);
+  postL.castShadow = true;
+  house.add(postL);
+
+  const postR = new THREE.Mesh(new THREE.BoxGeometry(postW, doorH, 0.16), materials.woodDark);
+  postR.position.set(doorW / 2, 0.4 + doorH / 2, d / 2);
+  postR.castShadow = true;
+  house.add(postR);
+
+  const topBeam = new THREE.Mesh(new THREE.BoxGeometry(doorW + 0.16, postW, 0.16), materials.woodDark);
+  topBeam.position.set(0, 0.4 + doorH, d / 2);
+  topBeam.castShadow = true;
+  house.add(topBeam);
+
+  // Rustic Open Door (swung ajar against inside left wall to allow walk-in)
+  const doorPanel = new THREE.Mesh(new THREE.BoxGeometry(0.06, doorH - 0.08, doorW * 0.8), materials.woodDark);
+  doorPanel.position.set(-doorW / 2 + 0.12, 0.4 + doorH / 2, d / 2 - doorW * 0.35);
+  doorPanel.rotation.y = 0.35;
+  doorPanel.castShadow = true;
+  house.add(doorPanel);
+
+  // Wooden Ceiling Board (visible when standing inside looking up)
+  const ceiling = new THREE.Mesh(new THREE.BoxGeometry(w, 0.08, d), materials.woodDark);
+  ceiling.position.set(0, 0.4 + wallH + 0.04, 0);
+  house.add(ceiling);
+
+  // Cozy Interior Furniture & Ambiance
+  // 1. Warm interior ceiling lantern
+  const houseLight = new THREE.PointLight(0xffbe76, 1.3, 5.5);
+  houseLight.position.set(0, 0.4 + wallH - 0.35, 0);
+  house.add(houseLight);
+  lanternLights.push(houseLight);
+
+  const lanternMesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.18, 0.12), materials.lanternGlow);
+  lanternMesh.position.set(0, 0.4 + wallH - 0.25, 0);
+  house.add(lanternMesh);
+
+  // 2. Woven Floor Rug
+  const rug = new THREE.Mesh(new THREE.BoxGeometry(w * 0.45, 0.02, d * 0.4), materials.clothRed);
+  rug.position.set(0, 0.4 + 0.05, 0);
+  rug.receiveShadow = true;
+  house.add(rug);
+
+  // 3. Rustic Corner Table & Candle
+  const table = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.42, 0.45), materials.woodDark);
+  table.position.set(-w / 2 + 0.55, 0.4 + 0.21, -d / 2 + 0.45);
+  table.castShadow = true;
+  const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.12, 6), materials.lanternGlow);
+  candle.position.set(-w / 2 + 0.55, 0.4 + 0.48, -d / 2 + 0.45);
+  house.add(table);
+  house.add(candle);
+
+  // 4. Sleeping Bed with Pillow and Wool Blanket
+  const bed = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.25, 1.0), materials.woodDark);
+  bed.position.set(w / 2 - 0.5, 0.4 + 0.125, -d / 2 + 0.65);
+  const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.08, 0.25), materials.clothWhite);
+  pillow.position.set(w / 2 - 0.5, 0.4 + 0.29, -d / 2 + 0.3);
+  const blanket = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.1, 0.6), materials.roofBlue);
+  blanket.position.set(w / 2 - 0.5, 0.4 + 0.29, -d / 2 + 0.75);
+  house.add(bed);
+  house.add(pillow);
+  house.add(blanket);
 
   // Corner Timber Beams
   const beamSize = 0.16;
@@ -1059,13 +1860,8 @@ function createHouse({ x, z, rotY, w, h, d, roofType, roofColor, name, hasChimne
     house.add(beam);
   });
 
-  // Front Wooden Door
-  const door = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.3, 0.06), materials.woodDark);
-  door.position.set(0, 0.4 + 0.65, d / 2 + 0.03);
-  house.add(door);
-
   // Windows with Warm Emissive Panes
-  [[-w * 0.28, d / 2 + 0.02], [w * 0.28, d / 2 + 0.02]].forEach(([wx, wz]) => {
+  [[-w * 0.32, d / 2 + 0.01], [w * 0.32, d / 2 + 0.01]].forEach(([wx, wz]) => {
     const win = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.65, 0.06), materials.glass);
     win.position.set(wx, 0.4 + h * 0.6, wz);
     house.add(win);
@@ -1116,7 +1912,7 @@ function createHouse({ x, z, rotY, w, h, d, roofType, roofColor, name, hasChimne
         })
       );
       puff.userData = {
-        basePos: new THREE.Vector3(x + w * 0.3, roofY + 1.8, z - d * 0.2),
+        basePos: new THREE.Vector3(x + w * 0.3, houseGroundY + roofY + 1.8, z - d * 0.2),
         offsetY: i * 0.45,
         speed: 0.015 + Math.random() * 0.01
       };
@@ -1125,7 +1921,7 @@ function createHouse({ x, z, rotY, w, h, d, roofType, roofColor, name, hasChimne
     }
   }
 
-  house.position.set(x, 0, z);
+  house.position.set(x, houseGroundY, z);
   house.rotation.y = rotY;
   interactableObjects.push(house);
   return house;
@@ -1137,17 +1933,18 @@ function createHouse({ x, z, rotY, w, h, d, roofType, roofColor, name, hasChimne
 function buildMassiveFoliage() {
   // 1. Pine Trees (Cone + Trunk)
   const pineCount = 220;
-  const pineTrunkGeo = new THREE.CylinderGeometry(0.18, 0.26, 1.2, 5);
-  pineTrunkGeo.translate(0, 0.6, 0);
+  const pineTrunkGeo = new THREE.CylinderGeometry(0.18, 0.28, 1.4, 5);
+  pineTrunkGeo.translate(0, 0.7, 0);
   const pineFoliageGeo = new THREE.ConeGeometry(1.6, 3.6, 5);
   pineFoliageGeo.translate(0, 2.6, 0);
 
-  // Single combined geometry for one draw call
-  const pineGeo = new THREE.BufferGeometry();
-  // We'll create separate instanced meshes for trunk and foliage
   instancedPineMesh = new THREE.InstancedMesh(pineFoliageGeo, materials.pineGreen, pineCount);
   instancedPineMesh.castShadow = true;
   instancedPineMesh.receiveShadow = true;
+
+  instancedPineTrunkMesh = new THREE.InstancedMesh(pineTrunkGeo, materials.woodDark, pineCount);
+  instancedPineTrunkMesh.castShadow = true;
+  instancedPineTrunkMesh.receiveShadow = true;
 
   const dummy = new THREE.Object3D();
   let validPines = 0;
@@ -1157,14 +1954,12 @@ function buildMassiveFoliage() {
     const rz = (Math.random() - 0.5) * 94;
 
     // Avoid river channel and central village square
-    const riverX = Math.sin(rz * 0.06) * 14 + (rz * 0.65) - 4;
+    const riverX = riverCenterX(rz);
     if (Math.abs(rx - riverX) < 6.5) continue;
     if (Math.hypot(rx, rz) < 14) continue;
 
-    let ry = 0;
-    // Elevate on northern hill or eastern ridge
-    if (Math.hypot(rx - 24, rz - (-26)) < 22) ry += 3.5;
-    if (Math.hypot(rx - 36, rz - 16) < 24) ry += 2.2;
+    const ry = getGroundElevation(rx, rz);
+    if (ry < 0.1) continue;
 
     const scale = 0.75 + Math.random() * 0.65;
     dummy.position.set(rx, ry, rz);
@@ -1173,31 +1968,42 @@ function buildMassiveFoliage() {
     dummy.updateMatrix();
 
     instancedPineMesh.setMatrixAt(validPines, dummy.matrix);
+    instancedPineTrunkMesh.setMatrixAt(validPines, dummy.matrix);
     validPines++;
   }
   instancedPineMesh.count = validPines;
+  instancedPineTrunkMesh.count = validPines;
   instancedPineMesh.instanceMatrix.needsUpdate = true;
+  instancedPineTrunkMesh.instanceMatrix.needsUpdate = true;
   villageWorld.add(instancedPineMesh);
+  villageWorld.add(instancedPineTrunkMesh);
 
-  // 2. Oak / Fruit Trees (Round Foliage)
+  // 2. Oak / Fruit Trees (Round Foliage + Trunk)
   const oakCount = 140;
+  const oakTrunkGeo = new THREE.CylinderGeometry(0.22, 0.35, 1.6, 6);
+  oakTrunkGeo.translate(0, 0.8, 0);
   const oakFoliageGeo = new THREE.DodecahedronGeometry(1.5, 1);
   oakFoliageGeo.translate(0, 2.2, 0);
+
   instancedOakMesh = new THREE.InstancedMesh(oakFoliageGeo, materials.oakGreen, oakCount);
   instancedOakMesh.castShadow = true;
   instancedOakMesh.receiveShadow = true;
+
+  instancedOakTrunkMesh = new THREE.InstancedMesh(oakTrunkGeo, materials.woodDark, oakCount);
+  instancedOakTrunkMesh.castShadow = true;
+  instancedOakTrunkMesh.receiveShadow = true;
 
   let validOaks = 0;
   for (let i = 0; i < oakCount; i++) {
     const rx = (Math.random() - 0.5) * 92;
     const rz = (Math.random() - 0.5) * 92;
 
-    const riverX = Math.sin(rz * 0.06) * 14 + (rz * 0.65) - 4;
+    const riverX = riverCenterX(rz);
     if (Math.abs(rx - riverX) < 5.5) continue;
     if (Math.hypot(rx, rz) < 12) continue;
 
-    let ry = 0;
-    if (Math.hypot(rx - (-26), rz - (-16)) < 20) ry += 1.4;
+    const ry = getGroundElevation(rx, rz);
+    if (ry < 0.1) continue;
 
     const scale = 0.7 + Math.random() * 0.55;
     dummy.position.set(rx, ry, rz);
@@ -1206,11 +2012,15 @@ function buildMassiveFoliage() {
     dummy.updateMatrix();
 
     instancedOakMesh.setMatrixAt(validOaks, dummy.matrix);
+    instancedOakTrunkMesh.setMatrixAt(validOaks, dummy.matrix);
     validOaks++;
   }
   instancedOakMesh.count = validOaks;
+  instancedOakTrunkMesh.count = validOaks;
   instancedOakMesh.instanceMatrix.needsUpdate = true;
+  instancedOakTrunkMesh.instanceMatrix.needsUpdate = true;
   villageWorld.add(instancedOakMesh);
+  villageWorld.add(instancedOakTrunkMesh);
 
   // 3. Low-Poly Boulders along River and Ridges
   const boulderCount = 90;
@@ -1335,6 +2145,8 @@ buildResidentialDistrict();
 buildFarmlandDistrict();
 buildMassiveFoliage();
 createFireflies();
+initPathfindingGrid();
+runNavSelfCheck();
 
 // ============================================================================
 // DAY / NIGHT LIGHTING & ATMOSPHERE SYSTEM
@@ -1511,7 +2323,9 @@ function applyGraphicSettings() {
   CONFIG.settings.vegetation = vegVal;
   const ratio = vegVal === 'dense' ? 1.0 : vegVal === 'balanced' ? 0.7 : 0.4;
   if (instancedPineMesh) instancedPineMesh.count = Math.floor(220 * ratio);
+  if (instancedPineTrunkMesh) instancedPineTrunkMesh.count = instancedPineMesh.count;
   if (instancedOakMesh) instancedOakMesh.count = Math.floor(140 * ratio);
+  if (instancedOakTrunkMesh) instancedOakTrunkMesh.count = instancedOakMesh.count;
 
   // 3. Particles
   CONFIG.settings.particles = optParticles.checked;
@@ -1586,13 +2400,14 @@ const POIS = [
   { id: 'windmill_door', name: 'Pintu Kincir Angin', x: 23, z: -25, type: 'door', isDoor: true, houseId: 'windmill', emote: '🌾', desc: 'Masuk ruang giling kincir angin' },
   { id: 'wheat_field', name: 'Ladang Gandum Emas', x: 28, z: -20, type: 'field', emote: '🌾', desc: 'Memeriksa bulir gandum siap panen' },
 
-  // District 5: Pemukiman Barat (6 Residential Doors)
-  { id: 'door_lurah', name: 'Rumah Pak Lurah', x: -23, z: -13, type: 'door', isDoor: true, houseId: 'h_lurah', emote: '🏠', desc: 'Pulang ke Rumah Pak Lurah' },
-  { id: 'door_healer', name: 'Rumah Tabib Herbal', x: -29, z: -19, type: 'door', isDoor: true, houseId: 'h_healer', emote: '🌿', desc: 'Pulang meracik ramuan herbal' },
-  { id: 'door_carpenter', name: 'Bengkel Pandai Kayu', x: -17, z: -21, type: 'door', isDoor: true, houseId: 'h_carpenter', emote: '🪵', desc: 'Pulang ke bengkel kayu' },
-  { id: 'door_hunter', name: 'Rumah Pemburu', x: -31, z: -9, type: 'door', isDoor: true, houseId: 'h_hunter', emote: '🏹', desc: 'Pulang ke kabin pemburu' },
-  { id: 'door_weaver', name: 'Rumah Penenun', x: -19, z: -9, type: 'door', isDoor: true, houseId: 'h_weaver', emote: '🧵', desc: 'Pulang menenun sutra' },
-  { id: 'door_guard', name: 'Menara Jaga Desa', x: -12, z: -25, type: 'door', isDoor: true, houseId: 'h_guard', emote: '🛡️', desc: 'Melapor di pos menara jaga' },
+  // District 5: Pemukiman Barat (Residential Doors aligned with ambang pintu)
+  { id: 'door_lurah', name: 'Rumah Pak Lurah', x: -22.8, z: -18.8, type: 'door', isDoor: true, houseId: 'h_lurah', emote: '🏠', desc: 'Pulang ke Rumah Pak Lurah' },
+  { id: 'door_healer', name: 'Rumah Tabib Herbal', x: -16.8, z: -21.7, type: 'door', isDoor: true, houseId: 'h_healer', emote: '🌿', desc: 'Pulang meracik ramuan herbal' },
+  { id: 'door_carpenter', name: 'Bengkel Pandai Kayu', x: -27.7, z: -12.4, type: 'door', isDoor: true, houseId: 'h_carpenter', emote: '🪵', desc: 'Pulang ke bengkel kayu' },
+  { id: 'door_hunter', name: 'Rumah Pemburu', x: -20.3, z: -13.3, type: 'door', isDoor: true, houseId: 'h_hunter', emote: '🏹', desc: 'Pulang ke kabin pemburu' },
+  { id: 'door_weaver', name: 'Rumah Penenun', x: -24.2, z: -6.6, type: 'door', isDoor: true, houseId: 'h_weaver', emote: '🧵', desc: 'Pulang menenun sutra' },
+  { id: 'door_guard', name: 'Menara Jaga Desa', x: -31.8, z: -16.8, type: 'door', isDoor: true, houseId: 'h_guard', emote: '🛡️', desc: 'Melapor di pos menara jaga' },
+  { id: 'door_shed', name: 'Lumbung Alat & Jerami', x: -7.7, z: 33.6, type: 'door', isDoor: true, houseId: 'h_shed', emote: '🌾', desc: 'Mengambil peralatan di lumbung' },
 
   // District 6: Kebun Sayur
   { id: 'cabbage_patch', name: 'Kebun Sayur & Labu', x: 26, z: 22, type: 'garden', emote: '🎃', desc: 'Menyiram tanaman kubis dan labu' }
@@ -1921,6 +2736,67 @@ function createVillagerMesh(archetype) {
 // Global Villager Active Instances
 const villagers = [];
 const villagerMeshes = [];
+window.villagers = villagers;
+
+// A* Path Assignment & Arrival Handler for NPC Life Cycle
+function setVillagerDestination(v, nextPoi) {
+  v.targetPoi = nextPoi;
+  const path = findPath(v.pos, { x: nextPoi.x, z: nextPoi.z }, true);
+  v.path = path && path.length > 0 ? path : [new THREE.Vector3(nextPoi.x, getGroundHeight(nextPoi.x, nextPoi.z), nextPoi.z)];
+  v.pathIndex = 0;
+  // If first waypoint is already reached or very close to start, advance immediately
+  if (v.path.length > 1 && Math.hypot(v.path[0].x - v.pos.x, v.path[0].z - v.pos.z) < 0.6) {
+    v.pathIndex = 1;
+  }
+  v.stuckTimer = 0;
+  if (!v.lastPos) v.lastPos = new THREE.Vector3();
+  v.lastPos.copy(v.pos);
+  v.isOnBridge = isPointOnBridge(v.pos.x, v.pos.z);
+}
+
+function handleVillagerArrival(v) {
+  // A. If POI is a house door -> Step Inside
+  if (v.targetPoi.isDoor) {
+    v.state = 'INSIDE_HOUSE';
+    v.isInside = true;
+    v.meshGroup.visible = false;
+    v.parts.speechSprite.visible = false;
+    v.timer = CONFIG.isNight ? 24 + Math.random() * 12 : 12 + Math.random() * 10;
+    return;
+  }
+
+  // B. If POI is a market stall -> Browse goods
+  if (v.targetPoi.type === 'stall') {
+    v.state = 'VISITING';
+    v.timer = 5 + Math.random() * 4;
+    v.parts.leftLegPivot.rotation.x = 0;
+    v.parts.rightLegPivot.rotation.x = 0;
+    v.parts.leftArmPivot.rotation.x = 0;
+    v.parts.rightArmPivot.rotation.x = 0;
+    v.parts.speechSprite.updateText(v.targetPoi.emote, v.targetPoi.desc);
+    return;
+  }
+
+  // C. If POI is tavern or plaza bench -> Sit down & relax
+  if (v.targetPoi.type === 'tavern' || v.targetPoi.type === 'bench') {
+    v.state = 'RESTING';
+    v.timer = 8 + Math.random() * 8;
+    v.parts.leftLegPivot.rotation.x = -Math.PI / 2.2;
+    v.parts.rightLegPivot.rotation.x = -Math.PI / 2.2;
+    v.parts.leftArmPivot.rotation.x = -0.4;
+    v.parts.rightArmPivot.rotation.x = -0.4;
+    v.meshGroup.position.y -= 0.18;
+    v.parts.speechSprite.updateText(v.targetPoi.emote, v.targetPoi.desc);
+    return;
+  }
+
+  // D. Dock, garden, field, bridge, or public -> Look around
+  v.state = 'VISITING';
+  v.timer = 6 + Math.random() * 5;
+  v.parts.leftLegPivot.rotation.x = 0;
+  v.parts.rightLegPivot.rotation.x = 0;
+  v.parts.speechSprite.updateText(v.targetPoi.emote, v.targetPoi.desc);
+}
 
 function spawnVillagers(count = 12) {
   // Clean up existing villagers safely
@@ -1958,11 +2834,18 @@ function spawnVillagers(count = 12) {
       walkSpeed: 1.6 + Math.random() * 0.5,
       walkCycle: Math.random() * 10,
       isInside: false,
-      chatPartner: null
+      chatPartner: null,
+      path: [],
+      pathIndex: 0,
+      stuckTimer: 0,
+      lastPos: new THREE.Vector3(sx, sy, sz),
+      isOnBridge: false
     };
 
     villager.meshGroup.position.copy(villager.pos);
     villager.meshGroup.rotation.y = villager.facingAngle;
+
+    setVillagerDestination(villager, villager.targetPoi);
 
     villageWorld.add(villager.meshGroup);
     interactableObjects.push(villager.meshGroup);
@@ -1982,15 +2865,15 @@ function lerpAngle(from, to, t) {
   return from + diff * t;
 }
 
-// NPC AI Update Loop (State Machine, Human Routines, Conversing, Housing & FPV Greeting)
+// NPC AI Update Loop (A* Waypoints, Bridge Choke Points, Housing Transitions & Human Routines)
 function updateVillagers(delta, time) {
   villagers.forEach((v) => {
     // Cooldown tickers
     if (v.chatCooldown > 0) v.chatCooldown -= delta;
     if (v.greetCooldown > 0) v.greetCooldown -= delta;
 
-    // Lantern intensity sync with night/day
-    if (CONFIG.isNight) {
+    // Lantern intensity sync with night/day & housing visibility
+    if (CONFIG.isNight && !v.isInside) {
       v.parts.lanternLight.intensity = 2.0;
     } else {
       v.parts.lanternLight.intensity = 0;
@@ -1998,73 +2881,100 @@ function updateVillagers(delta, time) {
 
     // 1. STATE: WALK
     if (v.state === 'WALK') {
-      const dx = v.targetPoi.x - v.pos.x;
-      const dz = v.targetPoi.z - v.pos.z;
-      const dist = Math.hypot(dx, dz);
+      if (!v.path || v.path.length === 0) {
+        setVillagerDestination(v, v.targetPoi);
+      }
+
+      if (v.pathIndex >= v.path.length) {
+        handleVillagerArrival(v);
+        return;
+      }
+
+      let wp = v.path[v.pathIndex];
+      let dx = wp.x - v.pos.x;
+      let dz = wp.z - v.pos.z;
+      let distToWp = Math.hypot(dx, dz);
+
+      const isFinalWp = v.pathIndex === v.path.length - 1;
+      const threshold = isFinalWp ? 1.0 : 0.7;
+
+      if (distToWp < threshold) {
+        v.pathIndex++;
+        if (v.pathIndex >= v.path.length) {
+          handleVillagerArrival(v);
+          return;
+        }
+        wp = v.path[v.pathIndex];
+        dx = wp.x - v.pos.x;
+        dz = wp.z - v.pos.z;
+        distToWp = Math.hypot(dx, dz);
+      }
+
+      // Check Bridge Transition & Speed
+      const wasOnBridge = v.isOnBridge;
+      v.isOnBridge = isPointOnBridge(v.pos.x, v.pos.z);
+      if (!wasOnBridge && v.isOnBridge) {
+        if (Math.random() < 0.35 && v.state === 'WALK') {
+          v.parts.speechSprite.updateText('🌉', 'Menyeberangi jembatan...');
+        }
+      }
+      const moveSpeed = v.isOnBridge ? v.walkSpeed * 0.92 : v.walkSpeed;
 
       const targetAngle = Math.atan2(dx, dz);
       v.facingAngle = lerpAngle(v.facingAngle, targetAngle, 8 * delta);
       v.meshGroup.rotation.y = v.facingAngle;
 
-      // Move forward
-      v.pos.x += Math.sin(v.facingAngle) * v.walkSpeed * delta;
-      v.pos.z += Math.cos(v.facingAngle) * v.walkSpeed * delta;
+      // Move forward along facing angle
+      v.pos.x += Math.sin(v.facingAngle) * moveSpeed * delta;
+      v.pos.z += Math.cos(v.facingAngle) * moveSpeed * delta;
+      resolveEntityCollision(v.pos, 0.3);
+
+      // Soft NPC separation push to prevent overlapping
+      for (let j = 0; j < villagers.length; j++) {
+        const other = villagers[j];
+        if (other.id !== v.id && !other.isInside) {
+          const sepDx = v.pos.x - other.pos.x;
+          const sepDz = v.pos.z - other.pos.z;
+          const sepDist = Math.hypot(sepDx, sepDz);
+          if (sepDist > 0.0001 && sepDist < 0.55) {
+            const push = (0.55 - sepDist) * 0.5;
+            v.pos.x += (sepDx / sepDist) * push;
+            v.pos.z += (sepDz / sepDist) * push;
+          }
+        }
+      }
+
       v.pos.y = getGroundHeight(v.pos.x, v.pos.z);
       v.meshGroup.position.copy(v.pos);
 
       // Swing limbs rhythmically
-      v.walkCycle += delta * v.walkSpeed * 4.5;
+      v.walkCycle += delta * moveSpeed * 4.5;
       v.parts.leftLegPivot.rotation.x = Math.sin(v.walkCycle) * 0.55;
       v.parts.rightLegPivot.rotation.x = -Math.sin(v.walkCycle) * 0.55;
       v.parts.leftArmPivot.rotation.x = -Math.sin(v.walkCycle) * 0.45;
       v.parts.rightArmPivot.rotation.x = Math.sin(v.walkCycle) * 0.45;
 
-      // Check arrival at POI
-      if (dist < 1.2) {
-        // A. If POI is a house door -> Step Inside
-        if (v.targetPoi.isDoor) {
-          v.state = 'INSIDE_HOUSE';
-          v.isInside = true;
-          v.meshGroup.visible = false;
-          v.parts.speechSprite.visible = false;
-          v.timer = CONFIG.isNight ? 24 + Math.random() * 12 : 12 + Math.random() * 10;
-          return;
+      // Stuck Detection & Recovery
+      const progressDist = Math.hypot(v.pos.x - v.lastPos.x, v.pos.z - v.lastPos.z);
+      if (progressDist < 0.05 * delta) {
+        v.stuckTimer = (v.stuckTimer || 0) + delta;
+        if (v.stuckTimer > 2.5) {
+          // Re-route with A* from current position
+          v.stuckTimer = 0;
+          const newPath = findPath(v.pos, { x: v.targetPoi.x, z: v.targetPoi.z }, true);
+          if (newPath && newPath.length > 0) {
+            v.path = newPath;
+            v.pathIndex = 0;
+          } else {
+            const altPois = POIS.filter((p) => p.id !== v.targetPoi.id && !p.isDoor);
+            const fallbackPoi = altPois[Math.floor(Math.random() * altPois.length)];
+            setVillagerDestination(v, fallbackPoi);
+          }
         }
-
-        // B. If POI is a market stall -> Browse goods
-        if (v.targetPoi.type === 'stall') {
-          v.state = 'VISITING';
-          v.timer = 5 + Math.random() * 4;
-          v.parts.leftLegPivot.rotation.x = 0;
-          v.parts.rightLegPivot.rotation.x = 0;
-          v.parts.leftArmPivot.rotation.x = 0;
-          v.parts.rightArmPivot.rotation.x = 0;
-          v.parts.speechSprite.updateText(v.targetPoi.emote, v.targetPoi.desc);
-          return;
-        }
-
-        // C. If POI is tavern or plaza bench -> Sit down & relax
-        if (v.targetPoi.type === 'tavern' || v.targetPoi.type === 'bench') {
-          v.state = 'RESTING';
-          v.timer = 8 + Math.random() * 8;
-          // Sitting posture
-          v.parts.leftLegPivot.rotation.x = -Math.PI / 2.2;
-          v.parts.rightLegPivot.rotation.x = -Math.PI / 2.2;
-          v.parts.leftArmPivot.rotation.x = -0.4;
-          v.parts.rightArmPivot.rotation.x = -0.4;
-          v.meshGroup.position.y -= 0.18;
-          v.parts.speechSprite.updateText(v.targetPoi.emote, v.targetPoi.desc);
-          return;
-        }
-
-        // D. Dock or Field -> Look at nature
-        v.state = 'VISITING';
-        v.timer = 6 + Math.random() * 5;
-        v.parts.leftLegPivot.rotation.x = 0;
-        v.parts.rightLegPivot.rotation.x = 0;
-        v.parts.speechSprite.updateText(v.targetPoi.emote, v.targetPoi.desc);
-        return;
+      } else {
+        v.stuckTimer = 0;
       }
+      v.lastPos.copy(v.pos);
 
       // Check crossing paths with another villager -> Social Chat
       if (v.chatCooldown <= 0) {
@@ -2123,13 +3033,15 @@ function updateVillagers(delta, time) {
         v.isInside = false;
         v.meshGroup.visible = true;
         v.parts.speechSprite.visible = CONFIG.settings.npcChat;
-        v.pos.set(v.targetPoi.x + 0.6, getGroundHeight(v.targetPoi.x + 0.6, v.targetPoi.z + 0.6), v.targetPoi.z + 0.6);
+        // Spawn right at the door threshold
+        v.pos.set(v.targetPoi.x, getGroundHeight(v.targetPoi.x, v.targetPoi.z), v.targetPoi.z);
         v.meshGroup.position.copy(v.pos);
         v.parts.speechSprite.updateText('😊', 'Segarnya udara luar!');
 
         // Pick next destination (Market, Tavern, Bridge, or Field)
         const openPois = POIS.filter((p) => !p.isDoor);
-        v.targetPoi = openPois[Math.floor(Math.random() * openPois.length)];
+        const nextPoi = openPois[Math.floor(Math.random() * openPois.length)];
+        setVillagerDestination(v, nextPoi);
         v.state = 'WALK';
       }
     }
@@ -2148,6 +3060,7 @@ function updateVillagers(delta, time) {
           if (v.state === 'CHATTING') {
             v.state = 'WALK';
             v.parts.speechSprite.updateText('🚶‍♂️', `Menuju ${v.targetPoi.name}`);
+            setVillagerDestination(v, v.targetPoi);
           }
         }, 1200);
       }
@@ -2169,7 +3082,7 @@ function updateVillagers(delta, time) {
         // Choose next POI based on time of day
         if (CONFIG.isNight && Math.random() < 0.65) {
           // Go home to sleep at night
-          v.targetPoi = v.homePoi;
+          setVillagerDestination(v, v.homePoi);
           v.parts.speechSprite.updateText('🏠', 'Saatnya pulang dan istirahat...');
         } else {
           // Pick another spot in the village
@@ -2177,7 +3090,7 @@ function updateVillagers(delta, time) {
           while (nextPoi.id === v.targetPoi.id) {
             nextPoi = POIS[Math.floor(Math.random() * POIS.length)];
           }
-          v.targetPoi = nextPoi;
+          setVillagerDestination(v, nextPoi);
           v.parts.speechSprite.updateText('🚶‍♂️', `Menuju ${v.targetPoi.name}`);
         }
         v.state = 'WALK';
@@ -2194,6 +3107,7 @@ const player = {
   pos: new THREE.Vector3(2, 1.65, 2), // Default spawn at central market square
   vel: new THREE.Vector3(),
   height: 1.65,
+  radius: 0.35,
   walkSpeed: 5.5,
   sprintSpeed: 9.8,
   isGrounded: true,
@@ -2208,20 +3122,6 @@ const player = {
     jump: false
   }
 };
-
-// Major building obstacles for smooth sliding collision
-const OBSTACLES = [
-  { x: 2, z: -3, r: 1.8, name: 'Air Mancur' },
-  { x: 19, z: 6.5, r: 3.8, name: 'Kedai Kopi' },
-  { x: -17, z: 10, r: 2.8, name: 'Kincir Air' },
-  { x: 24, z: -26, r: 2.6, name: 'Kincir Angin' },
-  { x: -24, z: -14, r: 2.5, name: 'Rumah Lurah' },
-  { x: -30, z: -20, r: 2.5, name: 'Rumah Tabib' },
-  { x: -18, z: -22, r: 2.5, name: 'Bengkel Kayu' },
-  { x: -32, z: -10, r: 2.5, name: 'Rumah Pemburu' },
-  { x: -20, z: -10, r: 2.5, name: 'Rumah Penenun' },
-  { x: -12, z: -25, r: 2.0, name: 'Menara Jaga' }
-];
 
 // Keyboard Listeners (WASD, Sprint, Jump, and Toggle V)
 window.addEventListener('keydown', (e) => {
@@ -2258,12 +3158,17 @@ window.addEventListener('keyup', (e) => {
 function updatePlayer(delta) {
   if (CONFIG.viewMode !== 'fpv') return;
 
+  const safeDelta = Math.min(delta, 0.1);
   const speed = player.keys.sprint ? player.sprintSpeed : player.walkSpeed;
 
   // Camera forward and right vectors projected onto XZ ground plane
   const forward = new THREE.Vector3();
   fpvCamera.getWorldDirection(forward);
   forward.y = 0;
+
+  if (forward.lengthSq() < 0.001) {
+    forward.set(-Math.sin(fpvCamera.rotation.y), 0, -Math.cos(fpvCamera.rotation.y));
+  }
   forward.normalize();
 
   const right = new THREE.Vector3();
@@ -2283,28 +3188,15 @@ function updatePlayer(delta) {
   // Smooth acceleration and damping
   const targetVelX = moveDir.x * speed;
   const targetVelZ = moveDir.z * speed;
-  player.vel.x = THREE.MathUtils.lerp(player.vel.x, targetVelX, 10 * delta);
-  player.vel.z = THREE.MathUtils.lerp(player.vel.z, targetVelZ, 10 * delta);
+  player.vel.x = THREE.MathUtils.lerp(player.vel.x, targetVelX, 10 * safeDelta);
+  player.vel.z = THREE.MathUtils.lerp(player.vel.z, targetVelZ, 10 * safeDelta);
 
   // Apply horizontal movement
-  player.pos.x += player.vel.x * delta;
-  player.pos.z += player.vel.z * delta;
+  player.pos.x += player.vel.x * safeDelta;
+  player.pos.z += player.vel.z * safeDelta;
 
-  // Boundary clamp (-47 to +47)
-  player.pos.x = THREE.MathUtils.clamp(player.pos.x, -47, 47);
-  player.pos.z = THREE.MathUtils.clamp(player.pos.z, -47, 47);
-
-  // Smooth obstacle sliding collision
-  OBSTACLES.forEach((obs) => {
-    const dx = player.pos.x - obs.x;
-    const dz = player.pos.z - obs.z;
-    const dist = Math.hypot(dx, dz);
-    if (dist < obs.r) {
-      const push = obs.r - dist;
-      player.pos.x += (dx / (dist || 1)) * push;
-      player.pos.z += (dz / (dist || 1)) * push;
-    }
-  });
+  // Comprehensive sliding collision (world boundary, solid obstacles, house walls & doorway thresholds)
+  resolveEntityCollision(player.pos, player.radius || 0.35);
 
   // Calculate terrain + bridge ground elevation
   const groundY = getGroundHeight(player.pos.x, player.pos.z);
@@ -2313,27 +3205,33 @@ function updatePlayer(delta) {
   if (player.keys.jump && player.isGrounded) {
     player.verticalVel = 7.2;
     player.isGrounded = false;
+    player.keys.jump = false;
   }
 
   if (!player.isGrounded) {
-    player.verticalVel -= 22.0 * delta;
-    player.pos.y += player.verticalVel * delta;
+    player.verticalVel -= 22.0 * safeDelta;
+    player.pos.y += player.verticalVel * safeDelta;
     if (player.pos.y <= groundY + player.height) {
       player.pos.y = groundY + player.height;
       player.verticalVel = 0;
       player.isGrounded = true;
     }
   } else {
-    // Smooth step climbing
+    // Ground following with step-off drop detection
     const targetY = groundY + player.height;
-    player.pos.y = THREE.MathUtils.lerp(player.pos.y, targetY, 14 * delta);
+    if (player.pos.y - targetY > 0.4) {
+      player.isGrounded = false;
+      player.verticalVel = 0;
+    } else {
+      player.pos.y = THREE.MathUtils.lerp(player.pos.y, targetY, Math.min(1.0, 16 * safeDelta));
+    }
   }
 
   // Head bobbing when walking
   const horizontalSpeed = Math.hypot(player.vel.x, player.vel.z);
   let bobOffset = 0;
   if (player.isGrounded && horizontalSpeed > 0.4) {
-    player.headBobTimer += delta * (player.keys.sprint ? 14 : 9);
+    player.headBobTimer += safeDelta * (player.keys.sprint ? 14 : 9);
     bobOffset = Math.sin(player.headBobTimer) * (player.keys.sprint ? 0.08 : 0.04);
   } else {
     player.headBobTimer = 0;
@@ -2357,6 +3255,12 @@ function setViewMode(mode) {
 
   if (mode === 'fpv') {
     activeCamera = fpvCamera;
+    const currentGround = getGroundHeight(player.pos.x, player.pos.z);
+    player.pos.y = currentGround + player.height;
+    player.verticalVel = 0;
+    player.isGrounded = true;
+    fpvCamera.position.set(player.pos.x, player.pos.y, player.pos.z);
+
     if (btnModeFpv) btnModeFpv.classList.add('active');
     if (btnModeIso) btnModeIso.classList.remove('active');
 
@@ -2417,6 +3321,13 @@ fpvControls.addEventListener('unlock', () => {
   }
 });
 
+document.addEventListener('pointerlockchange', () => {
+  const isLocked = document.pointerLockElement === canvas;
+  if (CONFIG.viewMode === 'fpv' && fpvClickPrompt) {
+    fpvClickPrompt.style.display = isLocked ? 'none' : 'flex';
+  }
+});
+
 // ============================================================================
 // INTERACTIVE RAYCASTING (Hover Tooltips on Buildings, Landmarks & Villagers)
 // ============================================================================
@@ -2425,21 +3336,36 @@ const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
 window.addEventListener('pointermove', (e) => {
-  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  const isFPV = CONFIG.viewMode === 'fpv';
+  if (isFPV) {
+    mouse.set(0, 0);
+  } else {
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  }
 
   raycaster.setFromCamera(mouse, activeCamera);
   const hits = raycaster.intersectObjects(interactableObjects, true);
 
   if (hits.length > 0 && tooltip) {
+    // In FPV, only show if within 14 units
+    if (isFPV && hits[0].distance > 14) {
+      tooltip.style.display = 'none';
+      return;
+    }
     let topParent = hits[0].object;
     while (topParent.parent && !interactableObjects.includes(topParent)) {
       topParent = topParent.parent;
     }
     if (topParent && topParent.name) {
       tooltip.style.display = 'block';
-      tooltip.style.left = `${e.clientX + 14}px`;
-      tooltip.style.top = `${e.clientY + 14}px`;
+      if (isFPV) {
+        tooltip.style.left = `${window.innerWidth / 2 + 14}px`;
+        tooltip.style.top = `${window.innerHeight / 2 + 16}px`;
+      } else {
+        tooltip.style.left = `${e.clientX + 14}px`;
+        tooltip.style.top = `${e.clientY + 14}px`;
+      }
       tooltip.textContent = `📍 ${topParent.name}`;
       canvas.style.cursor = 'pointer';
       return;
